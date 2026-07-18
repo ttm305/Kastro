@@ -28,7 +28,6 @@ import { AuthProvider, useAuth } from './lib/auth'
 import { getMyConversations, subscribeToMyConversations } from './lib/api'
 import { isNativePlatform, listenForNotificationTaps } from './lib/nativePush'
 import { startPresenceHeartbeat } from './lib/presenceHeartbeat'
-import DiagnosticsPanel from './components/DiagnosticsPanel'
 
 export type Screen =
   | 'login'
@@ -328,12 +327,16 @@ function AppShell() {
       {screen === 'ludopacing' && <LudoPacingSlice onNavigate={safeNavigate} lang={lang} />}
 
       {showNav && <BottomNav current={screen} onNavigate={safeNavigate} lang={lang} unreadChatCount={unreadChatCount} />}
-      {/* TEMPORARY, owner-only — see src/components/DiagnosticsPanel.tsx. Lets
-          the owner capture live room/presence/realtime state from their own
-          device while testing the presence + multiplayer-lobby fixes,
-          without needing devtools attached to a phone. Renders nothing at
-          all for non-owner accounts. */}
-      {userRole === 'owner' && <DiagnosticsPanel lang={lang} />}
+      {/* Diagnostics moved out of the global app shell — it used to render a
+          floating 🐞 button on every screen for owner accounts, which is not
+          acceptable production UI even though it never showed for players.
+          It now lives exclusively inside Admin Dashboard → Diagnostics (the
+          DiagnosticsTab function in AdminDashboardScreen.tsx), hidden behind
+          that owner-only route and off by default. The old floating-overlay
+          component (src/components/DiagnosticsPanel.tsx) is no longer
+          imported or rendered anywhere and can be deleted; it's left in
+          place only because this delivery's file tools can't delete files
+          from the mounted output folder. */}
       {/* Both hosts are non-essential realtime UI (celebratory overlays,
           the message toast) — wrapped individually in QuietErrorBoundary
           so a bug in either can never blank the entire app; the rest of

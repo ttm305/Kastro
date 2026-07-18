@@ -33,18 +33,33 @@ export function useMatchEngine(roomId: string | null) {
   const [round, setRound] = useState<MatchRound | null>(null)
   const [reveal, setReveal] = useState<RoundRevealRow[] | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // Distinguishes "the room/players query actually failed" (permission error,
+  // network drop, etc — must be shown to the player) from "this room simply
+  // has no players yet" (which is never true for the room's own creator, but
+  // can't be told apart from a swallowed error without this). This is what
+  // fixes the "0/0 ready, empty room, no visible error" class of bug: a
+  // failed fetch now surfaces here instead of silently rendering as an empty
+  // lobby forever.
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const advancedForRoundRef = useRef<string | null>(null)
 
   const refresh = useCallback(async () => {
     if (!roomId) return
-    const [r, ps, rd] = await Promise.all([getMatchRoom(roomId), getRoomPlayers(roomId), getCurrentRound(roomId)])
-    setRoom(r)
-    setPlayers(ps as RoomPlayerWithProfile[])
+    const [{ room: r, error: roomErr }, { players: ps, error: playersErr }, rd] = await Promise.all([
+      getMatchRoom(roomId), getRoomPlayers(roomId), getCurrentRound(roomId),
+    ])
+    const err = roomErr ?? playersErr ?? null
+    setFetchError(err)
+    // On a failed fetch, keep whatever we last successfully had rather than
+    // wiping the screen to a false "0 players" — the error banner (driven by
+    // fetchError) is what tells the player something's actually wrong.
+    if (!roomErr) setRoom(r)
+    if (!playersErr) setPlayers(ps as RoomPlayerWithProfile[])
     setRound((prev) => (rd && prev && rd.id === prev.id ? prev : rd))
   }, [roomId])
 
   useEffect(() => {
-    setRoom(null); setPlayers([]); setRound(null); setReveal(null); advancedForRoundRef.current = null
+    setRoom(null); setPlayers([]); setRound(null); setReveal(null); setFetchError(null); advancedForRoundRef.current = null
     refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId])
@@ -122,5 +137,5 @@ export function useMatchEngine(roomId: string | null) {
   const roundTimePct = round && round.duration_ms ? Math.min(1, Math.max(0, roundTimeLeftMs / round.duration_ms)) : 0
   const roundOpensInMs = round ? Math.max(0, new Date(round.starts_at).getTime() - nowMs) : 0
 
-  return { room, players, round, reveal, phase, nowMs, roundTimeLeftMs, roundTimePct, roundOpensInMs, refresh }
+  return { room, players, round, reveal, phase, nowMs, roundTimeLeftMs, roundTimePct, roundOpensInMs, refresh, fetchError }
 }

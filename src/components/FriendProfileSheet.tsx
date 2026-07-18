@@ -70,6 +70,27 @@ export default function FriendProfileSheet({ userId, lang, onClose, isFriend, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
+  // Same "don't let Online go stale" contract as FriendsScreen/ChatConversation
+  // — this sheet can stay open a while, so re-ask get_presence() periodically
+  // and immediately on foreground instead of trusting the one-time fetch above.
+  useEffect(() => {
+    let cancelled = false
+    const refreshPresence = async () => {
+      const [pres] = await getPresence([userId])
+      if (!cancelled) setPresence(pres ?? null)
+    }
+    const id = window.setInterval(refreshPresence, 15000)
+    const onForeground = () => { if (document.visibilityState === 'visible') refreshPresence() }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('focus', onForeground)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('focus', onForeground)
+    }
+  }, [userId])
+
   const progress = profile ? levelProgress(profile.xp) : null
 
   async function handleUnblock() {

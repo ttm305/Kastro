@@ -21,6 +21,7 @@ import Avatar from '../components/Avatar'
 import { supabase } from '../lib/supabaseClient'
 import type { Tables } from '../lib/database.types'
 import { getActiveSeason } from '../lib/api'
+import { getDiagEntries, subscribeDiag, clearDiagEntries, type DiagEntry } from '../lib/diagnostics'
 import {
   adminGetOverviewStats,
   adminGetDau,
@@ -109,7 +110,7 @@ interface Props {
   userEmail: string
 }
 
-type AdminTab = 'overview' | 'users' | 'codes' | 'branches' | 'games' | 'content' | 'announcements' | 'log'
+type AdminTab = 'overview' | 'users' | 'codes' | 'branches' | 'games' | 'content' | 'announcements' | 'log' | 'diagnostics'
 
 interface SampleUser {
   id: string
@@ -386,6 +387,7 @@ const IcoKey   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="non
 const IcoBar   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
 const IcoMega  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
 const IcoLog   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+const IcoBug   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V3m-4 4-2-2m12 2 2-2M4 12h4m8 0h4M6 18l-2 2m16-2 2 2m-10-1v3m0-14a4 4 0 0 0-4 4"/></svg>
 const IcoGrid  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
 const IcoBranch= () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V9l7-6 7 6v12"/><path d="M9 21v-6h6v6"/></svg>
 const IcoUp    = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
@@ -3134,6 +3136,76 @@ function LogTab({ lang, loading, log }: { lang:Lang; loading:boolean; log:AdminL
   )
 }
 
+// TEMPORARY, owner-only diagnostics viewer — see src/lib/diagnostics.ts.
+// Was previously a floating 🐞 button + full-screen overlay shown on every
+// page for owner accounts; that was flagged as unacceptable production UI
+// (visible on all normal screens, not hidden by default) and has been
+// removed from App.tsx entirely. This is its replacement: a plain tab here
+// in Admin Dashboard, only ever visible to someone who already navigated
+// here (owner-only route) and clicked this specific tab — nothing floats
+// or overlays outside of it. Every diagLog(...) call across the app
+// (presence heartbeat, match-room/board-game RPCs, realtime channel
+// status) still feeds the same in-memory ring buffer regardless of whether
+// this tab is ever opened; this is just a read-only viewer into it.
+function DiagnosticsTab({ lang }: { lang: Lang }) {
+  const ar = lang === 'ar'
+  const [entries, setEntries] = useState<DiagEntry[]>(getDiagEntries())
+  const [filter, setFilter] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => subscribeDiag(setEntries), [])
+
+  const filtered = filter.trim()
+    ? entries.filter(e => `${e.scope} ${e.message}`.toLowerCase().includes(filter.trim().toLowerCase()))
+    : entries
+
+  const copyAll = () => {
+    const text = filtered
+      .map(e => `${new Date(e.at).toISOString()} [${e.scope}] ${e.message}${e.data !== undefined ? ' ' + JSON.stringify(e.data) : ''}`)
+      .join('\n')
+    navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 11.5, color: 'rgba(var(--fg2-rgb),0.45)', lineHeight: 1.5 }}>
+        {ar
+          ? 'سجل تشخيصي مؤقت في الذاكرة فقط — الحضور، غرف اللعب الجماعي، وحالة القنوات المباشرة. غير مرئي لأي مستخدم آخر.'
+          : 'Temporary, in-memory diagnostics — presence, multiplayer rooms, and realtime channel status. Never visible to any non-owner account.'}
+      </div>
+
+      <div style={{ position: 'relative' }}>
+        <span style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: 11, color: 'rgba(var(--fg2-rgb),0.4)', pointerEvents: 'none', display: 'flex' }}><IcoSearch/></span>
+        <input style={{ ...S.input, paddingLeft: 32 }} placeholder={ar ? 'تصفية (مثال: presence, room, ready, realtime)' : 'Filter (e.g. presence, room, ready, realtime)'} value={filter} onChange={e => setFilter(e.target.value)} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button style={{ ...S.ghost, fontSize: 12 }} onClick={copyAll}>{copied ? (ar ? 'تم النسخ!' : 'Copied!') : (ar ? 'نسخ الكل' : 'Copy All')}</button>
+        <button style={{ ...S.ghost, fontSize: 12 }} onClick={clearDiagEntries}>{ar ? 'مسح' : 'Clear'}</button>
+        <div style={{ flex: 1 }} />
+        <div style={{ fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', alignSelf: 'center' }}>{filtered.length}/{entries.length}</div>
+      </div>
+
+      {filtered.length === 0 && <Empty icon="🐞" title={ar ? 'لا سجلات بعد' : 'No log entries yet'} sub={ar ? 'ابدأ استخدام الغرف/الدردشة/الحضور من أي جهاز' : 'Start using rooms/chat/presence from any device'} />}
+
+      {filtered.map(e => (
+        <div key={e.id} style={{ ...S.card, padding: '10px 12px' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 }}>
+            <span style={{ fontSize: 10, color: 'rgba(var(--fg2-rgb),0.35)', fontFamily: "'JetBrains Mono',monospace", flexShrink: 0 }}>{new Date(e.at).toLocaleTimeString()}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#67e8f9' }}>[{e.scope}]</span>
+          </div>
+          <div style={{ fontSize: 12, color: /fail|error|denied|forbidden/i.test(e.message) ? '#ff4757' : 'var(--foreground)' }}>{e.message}</div>
+          {e.data !== undefined && (
+            <pre style={{ margin: '4px 0 0', fontSize: 10.5, color: 'rgba(var(--fg2-rgb),0.55)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: "'JetBrains Mono',monospace" }}>
+              {typeof e.data === 'string' ? e.data : JSON.stringify(e.data)}
+            </pre>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 
 export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEmail }: Props) {
@@ -3207,6 +3279,7 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
     {key:'content',       en:'Content',  ar:'المحتوى',    Icon:IcoLayers},
     {key:'announcements', en:'Announce', ar:'الإعلانات',  Icon:IcoMega},
     {key:'log',           en:'Log',      ar:'السجل',      Icon:IcoLog},
+    {key:'diagnostics',   en:'Diagnostics', ar:'التشخيص', Icon:IcoBug},
   ]
 
   return (
@@ -3254,6 +3327,7 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
         {tab==='content'       && <ContentTab       lang={lang}/>}
         {tab==='announcements' && <AnnouncementsTab lang={lang} loading={loading} items={announcements} refetchAnnouncements={refetchAnnouncements} refetchLog={refetchLog}/>}
         {tab==='log'           && <LogTab           lang={lang} loading={loading} log={log}/>}
+        {tab==='diagnostics'   && <DiagnosticsTab   lang={lang}/>}
       </div>
     </div>
   )

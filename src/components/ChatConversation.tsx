@@ -184,9 +184,19 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
     // src/lib/presenceHeartbeat.ts) plus the 45s server-side freshness
     // window in get_presence() — frequent enough that "just went offline"
     // shows up within about one poll cycle, not tied to any Realtime
-    // subscription that could silently stop firing.
+    // subscription that could silently stop firing. Also re-polls
+    // immediately on foreground so reopening this chat after backgrounding
+    // the app never shows a stale Online carried over from before.
     const id = window.setInterval(poll, 15000)
-    return () => { cancelled = true; window.clearInterval(id) }
+    const onForeground = () => { if (document.visibilityState === 'visible') poll() }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('focus', onForeground)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('focus', onForeground)
+    }
   }, [otherUser.id])
 
   function handleInputChange(v: string) {

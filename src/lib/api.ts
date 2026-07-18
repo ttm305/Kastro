@@ -1232,23 +1232,33 @@ export async function setRoomReady(roomId: string, ready: boolean) {
   return row
 }
 
-export async function getMatchRoom(roomId: string): Promise<MatchRoom | null> {
+/**
+ * Returns { room, error } rather than throwing/swallowing — a failed fetch
+ * (e.g. an RLS/permission error) must be visibly distinguishable from "this
+ * room genuinely doesn't exist", otherwise the lobby silently renders as
+ * empty with no players and no way to tell a real bug from a fresh room.
+ * See useMatchEngine.ts's `fetchError` state, which is what actually
+ * surfaces this to the player.
+ */
+export async function getMatchRoom(roomId: string): Promise<{ room: MatchRoom | null; error: string | null }> {
   const { data, error } = await supabase.from('match_rooms').select('*').eq('id', roomId).maybeSingle()
-  if (error) { logErr('getMatchRoom', error); return null }
-  return data
+  if (error) { logErr('getMatchRoom', error); diagLog('match-room', 'getMatchRoom FAILED', { roomId, error: error.message, code: error.code }); return { room: null, error: error.message } }
+  return { room: data, error: null }
 }
 
-export async function getRoomPlayers(roomId: string) {
+/** Same error-visibility contract as getMatchRoom — see its comment. */
+export async function getRoomPlayers(roomId: string): Promise<{ players: (MatchRoomPlayer & { profile?: PublicProfile })[]; error: string | null }> {
   const { data, error } = await supabase.from('match_room_players').select('*').eq('room_id', roomId).is('left_at', null)
-  if (error) { logErr('getRoomPlayers', error); diagLog('match-room', 'getRoomPlayers FAILED', { roomId, error: error.message, code: error.code }); return [] }
+  if (error) { logErr('getRoomPlayers', error); diagLog('match-room', 'getRoomPlayers FAILED', { roomId, error: error.message, code: error.code }); return { players: [], error: error.message } }
   diagLog('match-room', 'getRoomPlayers ok', {
     roomId, playerCount: data.length, readyCount: data.filter((p) => p.is_ready).length,
     playerRowIds: data.map((p) => p.id), userIds: data.map((p) => p.user_id),
   })
-  if (!data.length) return []
-  const { data: profiles } = await supabase.rpc('get_public_profiles', { p_ids: data.map((p) => p.user_id) })
+  if (!data.length) return { players: [], error: null }
+  const { data: profiles, error: profErr } = await supabase.rpc('get_public_profiles', { p_ids: data.map((p) => p.user_id) })
+  if (profErr) diagLog('match-room', 'getRoomPlayers get_public_profiles FAILED (players still returned, unenriched)', { roomId, error: profErr.message })
   const map = new Map((profiles as PublicProfile[] | null ?? []).map((p) => [p.id, p]))
-  return data.map((p) => ({ ...p, profile: map.get(p.user_id) }))
+  return { players: data.map((p) => ({ ...p, profile: map.get(p.user_id) })), error: null }
 }
 
 /** The current (latest) round for a room — payload has no secret fields, safe to render directly. */
@@ -1341,7 +1351,7 @@ export type MatchResultRow = MatchRoomPlayer & {
 
 /** Final standings for a completed (or in-progress) room, joined with public profiles and each player's xp_awarded — everything the results screen needs in one call. */
 export async function getMatchResults(roomId: string): Promise<{ room: MatchRoom | null; results: MatchResultRow[] }> {
-  const [room, players] = await Promise.all([getMatchRoom(roomId), getRoomPlayers(roomId)])
+  const [{ room }, { players }] = await Promise.all([getMatchRoom(roomId), getRoomPlayers(roomId)])
   if (!players.length) return { room, results: [] }
   const sessionIds = players.map((p) => p.session_id).filter((s): s is string => !!s)
   const { data: sessions } = sessionIds.length

@@ -14,7 +14,9 @@
  * here reads or exposes another user's private data, and nothing is sent
  * anywhere off-device; it's an in-memory ring buffer plus console.log,
  * visible only in that browser's own devtools or the owner-only
- * DiagnosticsPanel (src/components/DiagnosticsPanel.tsx).
+ * Diagnostics tab inside Admin Dashboard (DiagnosticsTab in
+ * src/screens/AdminDashboardScreen.tsx) — never a floating overlay on
+ * normal screens.
  *
  * Meant to be deleted (or left harmlessly inert) once the underlying bugs
  * are confirmed fixed live — every call site is a single diagLog(...)

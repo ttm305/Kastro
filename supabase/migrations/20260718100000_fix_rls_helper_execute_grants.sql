@@ -1,0 +1,63 @@
+-- ============================================================
+-- CRITICAL FIX: "0/0 ready, no players, no Ready button" regression
+-- reported immediately after deploying 20260718090000.
+--
+-- ROOT CAUSE (confirmed by direct inspection, not guessed):
+--
+-- 20260718090000_fix_match_room_realtime_and_rls.sql added these RLS
+-- SELECT policies:
+--   match_room_players_select  using (private.is_match_room_member(...))
+--   match_rounds_select        using (private.is_match_room_member(...))
+--   match_round_answers_select using (private.is_match_room_member(...) via join)
+--
+-- and, in the same statement block that created the helper function,
+-- immediately revoked ALL privileges on it — including EXECUTE — from
+-- every role that could ever call it:
+--   revoke all on function private.is_match_room_member(uuid, uuid)
+--     from public, anon, authenticated;
+--
+-- SECURITY DEFINER changes whose privileges the function BODY runs with
+-- once it is entered. It does not, and never did, waive the separate
+-- requirement that the CALLING role hold EXECUTE on the function in order
+-- to call it at all. Every Emoji Decode / Color Blitz request from the
+-- app runs as the `authenticated` Postgres role (that's how PostgREST/
+-- Supabase auth works). The instant Postgres tried to evaluate
+-- `private.is_match_room_member(...)` as part of the RLS check for a plain
+-- `select * from match_room_players`, it hit "permission denied for
+-- function is_match_room_member" — for every user, including the room's
+-- own creator, on every single request. There was no scenario in which
+-- this policy could ever return a row for anyone.
+--
+-- The client's existing (deliberately non-crashing) error handling in
+-- getRoomPlayers()/getMatchRoom() logs the error and falls back to an
+-- empty players array so one failed fetch doesn't hard-crash the lobby
+-- screen — which is exactly why this surfaced as a silent "0/0 ready,
+-- empty room" instead of a visible error. (Separately, in this same
+-- delivery, getRoomPlayers/getMatchRoom/useMatchEngine are being changed
+-- to surface a "couldn't load room" error state instead of quietly
+-- rendering 0/0 when a fetch genuinely fails, so this class of bug is
+-- visible in production even if a future grant/policy issue reappears.)
+--
+-- The exact same mistake was made one migration earlier, in
+-- 20260718050000_fix_board_game_room_lobby.sql, for
+-- private.is_board_game_room_member(uuid, uuid) — used by the
+-- board_game_state / board_game_moves / board_game_spectators SELECT
+-- policies, and by board_game_messages_select added in
+-- 20260718060000_board_game_match_chat.sql. It was never caught because
+-- Ludo is currently disabled/hidden from normal users (see task history:
+-- "Disable and hide Ludo from normal users"), so nothing was exercising
+-- those code paths. Fixed here too, pre-emptively, before Ludo ever
+-- re-ships — same one-line grant, zero behavior change to anything that
+-- currently works.
+--
+-- THE FIX: grant EXECUTE back to `authenticated` only (never anon/public —
+-- these helpers must still be unreachable by an unauthenticated caller).
+-- This is a pure permissions correction. Nothing about WHO is allowed to
+-- see WHAT changes: the RLS policies' logic (is the caller the host, or a
+-- seated/active player of that room?) is exactly what was designed and
+-- reviewed in the previous migrations, and remains completely untouched
+-- here. No table, policy, or RPC body is modified by this migration.
+-- ============================================================
+
+grant execute on function private.is_match_room_member(uuid, uuid) to authenticated;
+grant execute on function private.is_board_game_room_member(uuid, uuid) to authenticated;

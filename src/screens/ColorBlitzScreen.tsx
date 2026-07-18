@@ -54,7 +54,7 @@ export default function ColorBlitzScreen({ onNavigate, lang }: Props) {
     return () => { cancelled = true }
   }, [])
 
-  const { room, players, round, reveal, phase, roundTimeLeftMs, roundTimePct, refresh } = useMatchEngine(roomId)
+  const { room, players, round, reveal, phase, roundTimeLeftMs, roundTimePct, refresh, fetchError } = useMatchEngine(roomId)
 
   // Presence lifecycle fix: this used to only mark me "left" this room when
   // I tapped the explicit in-lobby leave button — never on unmount, so
@@ -175,6 +175,23 @@ export default function ColorBlitzScreen({ onNavigate, lang }: Props) {
     return <MatchModeSelect gameId={GAME_ID} nameEn={nameEn} nameAr={nameAr} accentColor={accent} lang={lang} onBack={() => onNavigate('games')} onRoomReady={setRoomId} />
   }
 
+  if (!room && fetchError) {
+    return (
+      <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: '#ff4757' }}>
+          {isAr ? 'تعذر تحميل الغرفة' : "Couldn't load the room"}
+        </div>
+        <div style={{ fontSize: 12, color: 'rgba(var(--fg-rgb),0.5)', maxWidth: 320 }}>{fetchError}</div>
+        <button className="btn-primary" onClick={() => refresh()} style={{ padding: '10px 24px' }}>
+          {isAr ? 'إعادة المحاولة' : 'Retry'}
+        </button>
+        <button onClick={handleLeave} style={{ background: 'none', border: 'none', color: 'rgba(var(--fg-rgb),0.5)', fontSize: 12.5, cursor: 'pointer', textDecoration: 'underline' }}>
+          {isAr ? 'رجوع' : 'Back'}
+        </button>
+      </div>
+    )
+  }
+
   if (!room) {
     return (
       <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -189,7 +206,7 @@ export default function ColorBlitzScreen({ onNavigate, lang }: Props) {
         room={room} players={players} myUserId={myUserId} lang={lang} accentColor={accent} nameEn={nameEn} nameAr={nameAr}
         onReady={handleReady}
         busy={readyBusy}
-        error={readyError}
+        error={readyError ?? (fetchError ? (isAr ? `⚠ ${fetchError}` : `⚠ Couldn't refresh players: ${fetchError}`) : null)}
         onLeave={handleLeave}
       />
     )

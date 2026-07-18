@@ -158,13 +158,36 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
   }, [profile?.id])
 
   // Live presence refresh for the Friends list while it's the active tab.
+  // get_presence() is server-authoritative (computes is_online from a fresh
+  // last_seen_at, not a stored boolean — see migration
+  // 20260718080000_fix_live_presence.sql), but the client still has to
+  // actually re-ask it regularly or a friend who went offline mid-session
+  // would keep showing whatever status was fetched last. A 15s poll while
+  // this tab is open, PLUS an immediate refetch the instant the app/tab
+  // comes back to the foreground (visibilitychange/focus) or regains
+  // network (online) — polling alone can lag by up to 15s right after
+  // returning to the app, and a backgrounded tab's setInterval can be
+  // throttled/paused by the browser entirely, so the foreground listener is
+  // what actually guarantees "Online never appears stuck" in practice.
   useEffect(() => {
     if (tab !== 'friends' || !friends.length) return
-    const id = window.setInterval(async () => {
+    let cancelled = false
+    const refreshPresence = async () => {
       const presence = await getPresence(friends.map((x) => x.id))
-      setFriendPresence(new Map(presence.map((p) => [p.id, p])))
-    }, 15000)
-    return () => window.clearInterval(id)
+      if (!cancelled) setFriendPresence(new Map(presence.map((p) => [p.id, p])))
+    }
+    const id = window.setInterval(refreshPresence, 15000)
+    const onForeground = () => { if (document.visibilityState === 'visible') refreshPresence() }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('focus', onForeground)
+    window.addEventListener('online', onForeground)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('focus', onForeground)
+      window.removeEventListener('online', onForeground)
+    }
   }, [tab, friends])
 
   // Discover tab: live search when typing, otherwise a small "people you may know" list.
