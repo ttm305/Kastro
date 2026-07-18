@@ -4,6 +4,9 @@ This folder contains file-versioned copies of the migrations applied
 directly to the live Supabase project (`pagwybefqbnqrqigvvrw`) via the
 management API, going back to the Friends + Chat build:
 
+- `20260718040000_push_notifications_full_coverage.sql`
+- `20260718030100_fix_admin_toggle_access_code_enum_cast.sql`
+- `20260718030000_fix_log_admin_action_overload_ambiguity.sql`
 - `20260716200629_friends_chat_tables.sql`
 - `20260716200757_friends_chat_functions.sql`
 - `20260717162011_owner_admin_schema_extensions.sql`
@@ -21,6 +24,92 @@ management API, going back to the Friends + Chat build:
 - `20260717183512_revoke_anon_from_friends_chat_rpcs.sql`
 - `20260717184228_tighten_chat_table_grants.sql`
 - `20260717185041_add_notifications_to_realtime_publication.sql`
+
+## Push notifications: root cause confirmed, coverage extended to tournaments/challenges/friend requests
+
+Live investigation (`get_logs` against the `edge-function` service) found
+every past invocation of `send-push` returned **403 Forbidden**, not the
+`{skipped: "vapid_not_configured"}` 200 the function returns when
+VAPID/FCM env vars are simply absent. A 403 only happens when
+`x-internal-secret` fails to match — and since
+`PUSH_INTERNAL_SECRET` itself was never set on the Edge Function,
+`INTERNAL_SECRET` evaluates to `''` server-side, which the function's
+`!INTERNAL_SECRET` check always rejects regardless of what header is
+sent. This confirms the DB -> Edge Function wiring for chat messages has
+been firing correctly the entire time (pg_net dispatch, `send_message()`'s
+call into the push helper — none of it was broken); no push has ever been
+delivered purely because the four Edge Function secrets below were never
+actually set. **That is still true after this migration** — no tool
+available to any Claude session in this environment can set Edge Function
+secrets (that requires the Supabase CLI or Dashboard) — see the exact
+command below.
+
+`20260718040000_push_notifications_full_coverage.sql` extends push
+notifications beyond chat messages (the only event that ever fired a push
+call before this) to the three other events requested: tournament
+creation, daily/weekly/monthly/seasonal challenge creation, and friend
+requests. Changes: `private.send_push_for_new_message()` is renamed to
+the generic `private.send_push_notification()` (its body was never
+actually message-specific, only its name was — `send_message()`'s call
+site is updated accordingly); a new `private.send_push_broadcast()`
+mirrors how `private.notify_all_active()` already does one bulk in-app
+insert instead of one per user — it fires a single Edge Function call
+with `broadcast: true` rather than looping and firing one HTTP call per
+active user, which would not scale. `send_friend_request()`,
+`admin_create_tournament()`, and `admin_create_challenge()` each now also
+fire a push alongside their existing in-app `private.notify()` /
+`private.notify_all_active()` call. The Edge Function
+(`supabase/functions/send-push/index.ts`, redeployed as version 3) was
+updated in parallel to handle `broadcast: true` by querying every active
+user's `push_subscriptions`/`native_push_tokens` rows directly via a
+`profiles!inner(status)` join filter, rather than requiring the caller to
+already know the recipient list.
+
+**Verified live**, all via the real OWNER account: `send_friend_request()`,
+`admin_create_tournament()`, and `admin_create_challenge()` all execute
+without error and correctly reach the point of dispatching a push (no
+change to their existing return values or other side effects). A real
+(committed, then cleaned up) tournament creation was used to confirm the
+new broadcast path actually reaches the Edge Function end-to-end:
+`get_logs` shows a fresh `POST | 403` entry tagged with `version: "3"`
+(the new deployment) immediately after — proving the new
+`private.send_push_broadcast()` call site correctly dispatches via
+`pg_net`, and hits the exact same "secrets not configured" wall as chat
+always has, nothing new or additionally broken.
+
+**Push notifications will not actually deliver until the project owner
+runs** (same four secrets as before — nothing rotated, no reason to):
+
+```
+supabase secrets set --project-ref pagwybefqbnqrqigvvrw \
+  VAPID_PUBLIC_KEY=BKUQXoS3k9nIw2rKVyhAZoYiEv1Wihkh2dgkaRf6Q7sjLRiU4dPk_Dem6cJeywjTcnFVX48ur9my5uUiOX1b1tM \
+  VAPID_PRIVATE_KEY=wZcPv9vyT3AB8J7m7Y7Yq3LGMdtS1p_KWtkJKpMLFaU \
+  VAPID_SUBJECT=mailto:support@kastro.app \
+  PUSH_INTERNAL_SECRET=33bddc5367f4f825b4f638c8716e278e10fa182a202b9cb881b898d49aef17d7
+```
+
+After that command, every one of the four events (chat message,
+tournament, challenge, friend request) should start delivering real push
+notifications with no further code or database changes.
+
+Frontend: `src/App.tsx` now registers `public/sw.js` eagerly on app
+mount (previously the service worker was only ever registered lazily,
+inside `enablePush()`, meaning it never existed at all until the user had
+specifically opened Profile > Notifications and tapped the toggle at
+least once). This still never requests Notification permission or
+creates a subscription on its own — that stays a deliberate, explicit
+user action via the toggle — it just ensures the worker itself is
+installed and ready. The Profile > Notifications toggle copy
+(`src/screens/ProfileScreen.tsx`) was also updated from "Message
+notifications / Get notified when a new message arrives" to "Push
+notifications / New messages, tournaments, challenges, and friend
+requests", since it's no longer chat-only.
+
+**iOS Home Screen PWA note:** none of the above changes anything about
+the iOS 16.4+ requirement that the site be added to the Home Screen
+before `PushManager`/`Notification` exist at all in Safari — that
+limitation was already correctly disclosed in the original push
+notifications delivery and still applies unchanged.
 
 ## Critical finding: `notifications` was never in the realtime publication
 

@@ -1,9 +1,13 @@
 // send-push: delivers a push notification to every device a user has
 // registered — both Web Push (VAPID, browser/installed-PWA) and native
-// (FCM, Capacitor-wrapped iOS/Android). Invoked internally by
-// private.send_push_for_new_message() via pg_net whenever send_message()
-// creates an in-app "new_message" notification for a recipient who isn't
-// actively viewing the conversation.
+// (FCM, Capacitor-wrapped iOS/Android). Invoked internally, via pg_net,
+// from three places:
+//   - private.send_push_notification(user_id, ...)  — single recipient
+//     (new chat message, friend request)
+//   - private.send_push_broadcast(...)               — every active user
+//     (tournament created, challenge created)
+// Request body is either `{user_id, title, title_ar, body, body_ar, data}`
+// or `{broadcast: true, title, title_ar, body, body_ar, data}`.
 //
 // Auth model: this function is NOT a public API endpoint. verify_jwt is
 // disabled (there is no end-user JWT for a server-to-server DB->function
@@ -99,16 +103,16 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
   }
 
-  let payload: { user_id?: string; title?: string; title_ar?: string; body?: string; body_ar?: string; data?: Record<string, unknown> }
+  let payload: { user_id?: string; broadcast?: boolean; title?: string; title_ar?: string; body?: string; body_ar?: string; data?: Record<string, unknown> }
   try {
     payload = await req.json()
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const { user_id, title, body, data } = payload
-  if (!user_id) {
-    return new Response(JSON.stringify({ error: 'user_id required' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+  const { user_id, broadcast, title, body, data } = payload
+  if (!user_id && !broadcast) {
+    return new Response(JSON.stringify({ error: 'user_id or broadcast required' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
@@ -117,27 +121,36 @@ Deno.serve(async (req: Request) => {
   const fcmConfigured = !!(FCM_PROJECT_ID && FCM_SERVICE_ACCOUNT_JSON)
   if (!webPushConfigured) console.warn('send-push: VAPID keys not configured, skipping Web Push')
   if (!fcmConfigured) console.warn('send-push: FCM_PROJECT_ID/FCM_SERVICE_ACCOUNT_JSON not configured, skipping native push')
+  if (!webPushConfigured && !fcmConfigured) {
+    return new Response(JSON.stringify({ sent: 0, removed: 0, skipped: 'not_configured' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 
   let sent = 0
   let removed = 0
+  const notificationPayload = JSON.stringify({ title: title || 'KASTRO', body: body || '', data: data ?? {} })
 
-  // ── Web Push (browser tabs, installed PWA) ──
   if (webPushConfigured) {
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 
-    const { data: subs, error } = await supabase
-      .from('push_subscriptions')
-      .select('id, endpoint, p256dh, auth')
-      .eq('user_id', user_id)
+    // Broadcast: every subscription belonging to a currently-active user.
+    // Single recipient: just that user's rows. Same shape either way past
+    // this point, so the send/prune logic below doesn't need to branch.
+    const subsQuery = broadcast
+      ? supabase.from('push_subscriptions').select('id, endpoint, p256dh, auth, profiles!inner(status)').eq('profiles.status', 'active')
+      : supabase.from('push_subscriptions').select('id, endpoint, p256dh, auth').eq('user_id', user_id)
+
+    const { data: subs, error } = await subsQuery
 
     if (error) {
       console.error('send-push: push_subscriptions query failed', error)
     } else if (subs && subs.length > 0) {
-      const notificationPayload = JSON.stringify({ title: title || 'KASTRO', body: body || '', data: data ?? {} })
       const staleIds: string[] = []
 
       await Promise.all(
-        subs.map(async (s: { id: string; endpoint: string; p256dh: string; auth: string }) => {
+        (subs as { id: string; endpoint: string; p256dh: string; auth: string }[]).map(async (s) => {
           try {
             await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, notificationPayload)
             sent++
@@ -164,31 +177,38 @@ Deno.serve(async (req: Request) => {
 
   // ── Native push (Capacitor iOS/Android via FCM) ──
   if (fcmConfigured) {
-    const { data: tokens, error } = await supabase
-      .from('native_push_tokens')
-      .select('id, token')
-      .eq('user_id', user_id)
+    const tokensQuery = broadcast
+      ? supabase.from('native_push_tokens').select('id, token, user_id, profiles!inner(status)').eq('profiles.status', 'active')
+      : supabase.from('native_push_tokens').select('id, token, user_id').eq('user_id', user_id)
+
+    const { data: tokens, error } = await tokensQuery
 
     if (error) {
       console.error('send-push: native_push_tokens query failed', error)
     } else if (tokens && tokens.length > 0) {
-      // Badge count = current unread in-app notification count for this
-      // user. Computed here (service role, bypasses RLS) rather than via
-      // an RPC — this function already talks to Postgres directly and
-      // there's no client-facing reason to expose it as an RPC too.
-      const { count } = await supabase
-        .from('notifications')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user_id)
-        .eq('is_read', false)
-      const badge = count ?? 0
+      // Badge count = each recipient's current unread in-app notification
+      // count. For a single-recipient call this is one query; for a
+      // broadcast, batch-fetch unread counts for every distinct recipient
+      // up front rather than one query per token.
+      const recipientIds = [...new Set((tokens as { user_id: string }[]).map((t) => t.user_id))]
+      const badgeByUser = new Map<string, number>()
+      await Promise.all(
+        recipientIds.map(async (uid) => {
+          const { count } = await supabase
+            .from('notifications')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', uid)
+            .eq('is_read', false)
+          badgeByUser.set(uid, count ?? 0)
+        })
+      )
 
       const staleIds: string[] = []
 
       await Promise.all(
-        tokens.map(async (t: { id: string; token: string }) => {
+        (tokens as { id: string; token: string; user_id: string }[]).map(async (t) => {
           try {
-            await sendFcm(t.token, title || 'KASTRO', body || '', data ?? {}, badge)
+            await sendFcm(t.token, title || 'KASTRO', body || '', data ?? {}, badgeByUser.get(t.user_id) ?? 0)
             sent++
           } catch (err) {
             const fcmStatus = (err as { fcmStatus?: string })?.fcmStatus

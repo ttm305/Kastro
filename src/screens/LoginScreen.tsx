@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { CSSProperties } from 'react'
 import type { Screen, Lang } from '../App'
 import { OWNER_EMAIL } from '../App'
 import KastroLogo from '../components/KastroLogo'
@@ -124,7 +125,25 @@ export default function LoginScreen({ onNavigate: _onNavigate, lang, setLang }: 
         background: 'radial-gradient(ellipse 120% 80% at 20% 10%, rgba(124,58,237,0.22) 0%, transparent 60%), radial-gradient(ellipse 80% 60% at 80% 90%, rgba(0,212,255,0.14) 0%, transparent 55%), #03030f',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         padding: '24px 24px 48px', position: 'relative', overflow: 'hidden',
-      }}
+        // This screen's backdrop is intentionally always dark (a fixed
+        // "space" brand treatment), regardless of the app-wide light/dark
+        // toggle — but every input/label/helper-text color below reads
+        // from the shared --foreground/--fg-rgb/--fg2-rgb theme variables,
+        // which DO flip in light mode (see :root[data-theme='light'] in
+        // index.css, where --foreground becomes near-black for use on
+        // light backgrounds elsewhere in the app). Left alone, toggling to
+        // light mode made every label, input value, placeholder, and
+        // dropdown option here render near-black text on this near-black
+        // background — unreadable. Pinning the foreground variables to
+        // their dark-mode values in this subtree, regardless of
+        // data-theme, keeps this screen's text white/near-white in both
+        // modes without touching the global theme or any other screen.
+        ['--foreground' as string]: '#eeeeff',
+        ['--foreground-muted' as string]: 'rgba(200,200,255,0.65)',
+        ['--foreground-dim' as string]: 'rgba(180,180,230,0.45)',
+        ['--fg-rgb' as string]: '255,255,255',
+        ['--fg2-rgb' as string]: '200,200,255',
+      } as CSSProperties}
     >
       {/* Star field */}
       <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.7, pointerEvents: 'none' }} />
@@ -382,9 +401,15 @@ export default function LoginScreen({ onNavigate: _onNavigate, lang, setLang }: 
                     borderRadius: 10, padding: '11px 12px', fontSize: 14, color: branchId ? 'var(--foreground)' : 'rgba(var(--fg2-rgb),0.4)',
                   }}
                 >
-                  <option value="" disabled>{T.deptPlaceholder}</option>
+                  {/* Explicit background+color on <option> — the popup list
+                      for a native <select> is rendered by the OS, not by
+                      our CSS cascade, so without this some browsers (iOS/
+                      Android included) fall back to system colors that can
+                      end up low-contrast against our dark theme. Most
+                      browsers that respect any option styling respect this. */}
+                  <option value="" disabled style={{ background: '#0d0d28', color: 'rgba(200,200,255,0.6)' }}>{T.deptPlaceholder}</option>
                   {branches.map((b) => (
-                    <option key={b.id} value={b.id}>{isAr ? b.name_ar : b.name_en}</option>
+                    <option key={b.id} value={b.id} style={{ background: '#0d0d28', color: '#eeeeff' }}>{isAr ? b.name_ar : b.name_en}</option>
                   ))}
                 </select>
               )}

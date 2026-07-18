@@ -294,14 +294,16 @@ function PushNotificationToggle({ isAr }: { isAr: boolean }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>
-              {isAr ? 'إشعارات الرسائل' : 'Message notifications'}
+              {isAr ? 'الإشعارات' : 'Push notifications'}
             </p>
             <p style={{ margin: '2px 0 0', fontSize: 11, color: 'rgba(var(--fg2-rgb),0.5)' }}>
               {permission === 'denied'
                 ? (isAr ? 'محظورة من إعدادات المتصفح' : 'Blocked in browser settings')
                 : subscribedHere
                   ? (isAr ? 'مفعّلة على هذا الجهاز' : 'Enabled on this device')
-                  : (isAr ? 'احصل على إشعار عند وصول رسالة جديدة' : 'Get notified when a new message arrives')}
+                  : (isAr
+                      ? 'رسائل جديدة، بطولات، تحديات، وطلبات صداقة'
+                      : 'New messages, tournaments, challenges, and friend requests')}
             </p>
           </div>
           <button

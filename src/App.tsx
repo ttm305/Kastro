@@ -114,6 +114,23 @@ function AppShell() {
   //  - closed/backgrounded with no existing tab: it opens a fresh window
   //    with ?open_chat=... in the URL, consumed once on mount below.
   useEffect(() => {
+    // Register the push service worker as early as possible, independent
+    // of whether the user has ever opened Profile > Notifications. This
+    // does NOT request Notification permission or create a push
+    // subscription (that stays a deliberate user action — see
+    // enablePush() in src/lib/push.ts, triggered only by the toggle) —
+    // it just makes sure the worker itself is installed and active, so a
+    // push arriving after the user later enables notifications doesn't
+    // depend on them having revisited a specific screen first. No-ops
+    // outside a browser/PWA context (native builds use FCM directly, no
+    // service worker involved) or where the Push API isn't available at
+    // all (e.g. an ordinary — not Home-Screen-installed — iOS Safari tab).
+    if (!isNativePlatform() && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.error('[sw] registration failed', err)
+      })
+    }
+
     const params = new URLSearchParams(window.location.search)
     const openChatId = params.get('open_chat')
     if (openChatId) {
