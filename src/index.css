@@ -19,6 +19,12 @@
 }
 
 :root {
+  /* Fallback only — BottomNav.tsx overwrites this on mount (and on every
+     resize/orientation change/label-wrap) with the nav's real measured
+     offsetHeight via ResizeObserver, so padding-bottom below is always
+     exactly correct instead of a guessed constant. See .pb-nav. */
+  --bottom-nav-height: 80px;
+
   /* ── Core palette (dark, default) ── */
   --background: #03030f;
   --surface-1: #08081e;
@@ -524,7 +530,26 @@ input::placeholder, textarea::placeholder { color: rgba(var(--fg-rgb),0.25); }
   background: #9d6fff; border-radius: 50%;
   box-shadow: 0 0 10px #9d6fff;
 }
-.pb-nav { padding-bottom: calc(80px + env(safe-area-inset-bottom, 8px)); }
+/* Single shared source of truth for "leave room for the fixed bottom nav"
+   clearance — every one of the five nav-visible screens (Home, Games,
+   Friends, Ranks, Hero/Profile) uses this same class on its outermost
+   scrollable content wrapper instead of each screen inventing its own
+   pixel math. `!important` is deliberate here: this rule was previously
+   getting silently overridden by a colliding inline `paddingBottom` on
+   the very element carrying this class in every one of those screens
+   (each one hardcoded something like `paddingBottom: 'calc(80px + 20px)'`
+   inline, which — being an inline style — always wins over this class
+   regardless of what this class says, React or not). That inline number
+   ignored the device's actual env(safe-area-inset-bottom) entirely, which
+   is exactly how "Sign Out partially hidden behind the nav" and the
+   Games/Ranks/Hero bottom-clipping reports happened on real notched
+   iPhones. Forcing it here guarantees a stray inline style can never
+   silently reintroduce that bug again. --bottom-nav-height is measured
+   live (see BottomNav.tsx), so this stays correct even if label
+   wrapping, Dynamic Type, or a future nav redesign changes the nav's
+   real height. The flat 16px on top is deliberate breathing room so the
+   last element clears the nav with visible daylight, not just barely. */
+.pb-nav { padding-bottom: calc(var(--bottom-nav-height, 80px) + env(safe-area-inset-bottom, 0px) + 16px) !important; }
 .screen { min-height: 100dvh; }
 
 /* ─── Streak fire ─── */

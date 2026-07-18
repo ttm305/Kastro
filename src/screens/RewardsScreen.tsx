@@ -185,7 +185,7 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
       <Toast msg={toast?.msg || ''} visible={!!toast} color={toast?.color} />
       <TopBar title="Shop" titleAr="المتجر" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
 
-      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+      <div className="pb-nav" style={{ padding: '16px 16px' }}>
 
         {/* My Coins */}
         <div

@@ -122,7 +122,7 @@ export default function SeasonPassScreen({ onNavigate, lang, setLang }: Props) {
     return (
       <div className="screen bg-game">
         <TopBar title="Season Pass" titleAr="بطاقة الموسم" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
-        <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 20px)' }}>
+        <div className="pb-nav" style={{ padding: '16px 16px' }}>
           <div className="glass-card" style={{ padding: '40px 20px', textAlign: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 32, marginBottom: 10 }}>🌟</div>
             <p style={{ margin: 0, fontSize: 13, color: 'rgba(var(--fg2-rgb),0.5)' }}>
@@ -145,7 +145,7 @@ export default function SeasonPassScreen({ onNavigate, lang, setLang }: Props) {
     <div className="screen bg-game">
       <TopBar title="Season Pass" titleAr="بطاقة الموسم" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
 
-      <div className="pb-nav" style={{ padding: '14px 16px', paddingBottom: 'calc(80px + 20px)' }}>
+      <div className="pb-nav" style={{ padding: '14px 16px' }}>
         {/* Season Hero */}
         <div
           className="card"

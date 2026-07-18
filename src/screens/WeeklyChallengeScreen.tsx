@@ -118,7 +118,7 @@ export default function WeeklyChallengeScreen({ onNavigate: _onNavigate, onNavig
     <div className="screen bg-mesh">
       <TopBar title="Challenges" titleAr="التحديات" lang={lang} setLang={setLang} onBack={onBack} />
 
-      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+      <div className="pb-nav" style={{ padding: '16px 16px' }}>
         {/* Period tabs */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 16, background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 12, padding: 4 }}>
           {PERIODS.map((p) => (

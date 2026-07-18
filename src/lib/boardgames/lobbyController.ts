@@ -45,7 +45,34 @@ export function useBoardGameLobby(roomId: string | null, userId: string) {
     // returning to a lobby they'd already joined in an earlier session.
     joinBoardGameRoom(roomId).finally(() => { if (!cancelled) refresh() })
     const unsubscribe = subscribeToBoardGameRoom(roomId, () => { if (!cancelled) refresh() })
-    return () => { cancelled = true; unsubscribe() }
+
+    // Realtime channels don't survive every Safari/PWA background→foreground
+    // cycle cleanly (iOS can suspend the socket without ever firing a client
+    // "closed" event), and a stale channel that never fires again would leave
+    // the lobby stuck on whatever it last saw — e.g. permanently "0/2 ready"
+    // even though the other device is happily 2/2. Force a direct refetch
+    // (bypassing realtime entirely) whenever the tab/app comes back to the
+    // foreground or the network comes back, so state self-heals regardless of
+    // whether the realtime socket itself recovered.
+    const onForeground = () => { if (!cancelled && document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('online', onForeground)
+    window.addEventListener('focus', onForeground)
+
+    // Realtime is the fast path; this is the guaranteed-correct fallback so a
+    // dropped/never-fired event can't leave two devices looking at different
+    // ready counts indefinitely. Cheap (three small selects) and short-lived —
+    // only runs while a lobby screen is actually mounted.
+    const pollId = window.setInterval(() => { if (!cancelled) refresh() }, 4000)
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('online', onForeground)
+      window.removeEventListener('focus', onForeground)
+      window.clearInterval(pollId)
+    }
   }, [roomId, refresh])
 
   const myPlayer = players.find((p) => p.user_id === userId) ?? null
@@ -53,15 +80,35 @@ export function useBoardGameLobby(roomId: string | null, userId: string) {
   const allReady = players.length > 0 && players.every((p) => p.is_ready)
   const canStart = isHost && !!room && players.length >= room.min_players && allReady
 
+  // Every mutation refetches immediately on success instead of waiting on the
+  // realtime echo to come back around — that's what made the Ready button
+  // look broken: the write could succeed while the UI only ever moved if/when
+  // a postgres_changes event happened to arrive. Now the acting client's own
+  // screen updates instantly regardless of realtime health, and errors (e.g.
+  // "You are not seated in this room") are returned to the caller instead of
+  // being swallowed.
   const setReady = useCallback(
-    (ready: boolean) => (roomId ? setBoardGameReady(roomId, ready) : Promise.resolve({ error: 'no room' })),
-    [roomId]
+    async (ready: boolean) => {
+      if (!roomId) return { error: 'no room' }
+      const result = await setBoardGameReady(roomId, ready)
+      await refresh()
+      return result
+    },
+    [roomId, refresh]
   )
   const startMatch = useCallback(
-    () => (roomId ? startBoardGameRoom(roomId) : Promise.resolve({ error: 'no room', room: null })),
-    [roomId]
+    async () => {
+      if (!roomId) return { error: 'no room', room: null }
+      const result = await startBoardGameRoom(roomId)
+      await refresh()
+      return result
+    },
+    [roomId, refresh]
   )
-  const leave = useCallback(() => (roomId ? leaveBoardGameRoom(roomId) : Promise.resolve()), [roomId])
+  const leave = useCallback(async () => {
+    if (!roomId) return
+    await leaveBoardGameRoom(roomId)
+  }, [roomId])
 
   return { loading, room, players, spectatorCount, myPlayer, isHost, allReady, canStart, setReady, startMatch, leave }
 }

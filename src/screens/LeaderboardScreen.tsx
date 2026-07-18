@@ -175,7 +175,7 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
       <Confetti active={confetti} />
       <TopBar title="Leaderboard" titleAr="المتصدرون" lang={lang} setLang={setLang} />
 
-      <div className="pb-nav" style={{ padding: '14px 16px', paddingBottom: 'calc(80px + 20px)' }}>
+      <div className="pb-nav" style={{ padding: '14px 16px' }}>
 
         {/* Scope tabs */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 10, overflowX: 'auto', paddingBottom: 2 }}>

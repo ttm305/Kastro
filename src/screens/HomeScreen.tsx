@@ -255,7 +255,7 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
         </div>
       </div>
 
-      <div className="pb-nav" style={{ padding: '14px 16px', paddingBottom: 'calc(80px + 20px)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="pb-nav" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* ─ 1. PLAYER IDENTITY ─────────────────────── */}
         <div

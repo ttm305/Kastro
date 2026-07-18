@@ -337,7 +337,7 @@ export default function GamesLibraryScreen({ onNavigateToGame, lang, setLang }: 
         </div>
       </div>
 
-      <div className="pb-nav" style={{ padding: '0 16px', paddingBottom: 'calc(80px + 24px)' }}>
+      <div className="pb-nav" style={{ padding: '0 16px' }}>
         {showWork && (
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>

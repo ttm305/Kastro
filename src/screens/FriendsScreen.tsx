@@ -245,7 +245,7 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
       {/* Friends is a top-level nav tab now (like Games/Leaderboard), so no back arrow. */}
       <TopBar title="Friends" titleAr="الأصدقاء" lang={lang} setLang={setLang} />
 
-      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+      <div className="pb-nav" style={{ padding: '16px 16px' }}>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 6, background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 12, padding: 4, marginBottom: 16 }}>
           {tabs.map((t) => (

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Screen, Lang } from '../App'
 
 interface Props {
@@ -49,9 +50,28 @@ const ITEMS = [
 
 export default function BottomNav({ current, onNavigate, lang, unreadChatCount = 0 }: Props) {
   const isAr = lang === 'ar'
+  const navRef = useRef<HTMLElement | null>(null)
+
+  // Every screen's bottom padding (see .pb-nav in index.css) is computed
+  // from --bottom-nav-height, kept in sync with this nav's REAL rendered
+  // height rather than a guessed constant — so it self-corrects for label
+  // wrapping, Dynamic Type / larger system font sizes, orientation
+  // changes, or a future redesign of this nav, instead of drifting stale
+  // like the hardcoded per-screen pixel math this replaces did.
+  useEffect(() => {
+    const el = navRef.current
+    if (!el) return
+    const apply = () => {
+      document.documentElement.style.setProperty('--bottom-nav-height', `${el.offsetHeight}px`)
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [lang])
 
   return (
-    <nav className="bottom-nav">
+    <nav className="bottom-nav" ref={navRef}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         {ITEMS.map((item) => {
           const isActive = current === item.screen

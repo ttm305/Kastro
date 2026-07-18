@@ -697,7 +697,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
         </div>
       </div>
 
-      <div className="pb-nav" style={{ padding: '12px 20px', paddingBottom: 'calc(80px + 20px)' }}>
+      <div className="pb-nav" style={{ padding: '12px 20px' }}>
 
         {/* Name & rank */}
         <div style={{ marginBottom: 16 }}>

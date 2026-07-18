@@ -170,7 +170,7 @@ export default function TournamentScreen({ onNavigate, lang, setLang }: Props) {
     <div className="screen bg-game">
       <TopBar title="Tournament" titleAr="بطولة التصفيات" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
 
-      <div className="pb-nav" style={{ padding: '14px 16px', paddingBottom: 'calc(80px + 20px)' }}>
+      <div className="pb-nav" style={{ padding: '14px 16px' }}>
         {/* Hero */}
         <div
           className="card"

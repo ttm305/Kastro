@@ -18,6 +18,7 @@ import {
   leaveBoardGameSpectator, leaveBoardGameRoom, getSpectatableBoardGameRooms, type BoardGameRoom,
   getMyBoardGameHistory, getBoardGameMatchDetail, type BoardGameHistoryEntry, type BoardGameMatchDetail,
 } from '../lib/api'
+import MatchChat from '../components/boardgames/MatchChat'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -115,7 +116,7 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
 
   return (
     <div style={{
-      minHeight: '100dvh', paddingBottom: 24,
+      minHeight: '100dvh', paddingBottom: 'calc(24px + env(safe-area-inset-bottom, 0px))',
       background: 'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(124,58,237,0.16), transparent 55%), var(--background)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 16px 10px' }}>
@@ -590,6 +591,8 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
   const [starting, setStarting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  const [readyBusy, setReadyBusy] = useState(false)
+  const [readyError, setReadyError] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<number | null>(null)
 
   // The instant the room flips to 'active' (any client can be the one to
@@ -624,6 +627,16 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
     const { error } = await startMatch()
     setStarting(false)
     if (error) setStartError(error)
+  }
+
+  const handleToggleReady = async () => {
+    const next = !myPlayer?.is_ready
+    setReadyBusy(true)
+    setReadyError(null)
+    const { error } = await setReady(next)
+    setReadyBusy(false)
+    if (error) { setReadyError(error); return }
+    ;(next ? ludoSound.ready : ludoSound.unready)()
   }
 
   const handleCopyCode = () => {
@@ -685,11 +698,18 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
       )}
 
       <button
-        onClick={() => { const next = !myPlayer?.is_ready; (next ? ludoSound.ready : ludoSound.unready)(); setReady(next) }}
-        style={{ width: '100%', padding: '13px 0', borderRadius: 14, border: `1.5px solid ${myPlayer?.is_ready ? '#2ed573' : '#7c3aed'}`, background: myPlayer?.is_ready ? 'rgba(46,213,115,0.12)' : 'rgba(124,58,237,0.12)', color: myPlayer?.is_ready ? '#2ed573' : '#7c3aed', fontWeight: 800, fontSize: 14, cursor: 'pointer', marginBottom: 10, transition: 'background 200ms, border-color 200ms, color 200ms' }}
+        onClick={handleToggleReady}
+        disabled={readyBusy || !myPlayer}
+        style={{ width: '100%', padding: '13px 0', borderRadius: 14, border: `1.5px solid ${myPlayer?.is_ready ? '#2ed573' : '#7c3aed'}`, background: myPlayer?.is_ready ? 'rgba(46,213,115,0.12)' : 'rgba(124,58,237,0.12)', color: myPlayer?.is_ready ? '#2ed573' : '#7c3aed', fontWeight: 800, fontSize: 14, cursor: readyBusy || !myPlayer ? 'not-allowed' : 'pointer', opacity: readyBusy || !myPlayer ? 0.6 : 1, marginBottom: 10, transition: 'background 200ms, border-color 200ms, color 200ms' }}
       >
-        {myPlayer?.is_ready ? (isAr ? '✓ جاهز' : '✓ Ready') : (isAr ? 'استعد' : 'Ready Up')}
+        {readyBusy ? (isAr ? 'جارٍ التحديث...' : 'Updating…') : myPlayer?.is_ready ? (isAr ? '✓ جاهز' : '✓ Ready') : (isAr ? 'استعد' : 'Ready Up')}
       </button>
+
+      {readyError && (
+        <div style={{ padding: '10px 14px', borderRadius: 12, background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>
+          {readyError}
+        </div>
+      )}
 
       {isHost && startError && (
         <div style={{ padding: '10px 14px', borderRadius: 12, background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>
@@ -856,6 +876,7 @@ function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; use
           </div>
         </div>
       )}
+      <MatchChat roomId={roomId} userId={userId} isAr={isAr} />
     </div>
   )
 }
@@ -872,25 +893,28 @@ function LudoSpectateMatch({ roomId, userId, isAr, onExit }: { roomId: string; u
   }
 
   return (
-    <LudoBoard
-      seats={seats}
-      state={state}
-      currentSeatIndex={currentSeatIndex}
-      currentSeat={currentSeat}
-      validMoves={validMoves}
-      events={events}
-      result={result}
-      isMyTurn={false}
-      meSeatIndex={null}
-      isAr={isAr}
-      online
-      spectating
-      turnTimeLeftMs={turnTimeLeftMs}
-      turnTimerTotalMs={room?.turn_timer_seconds ? room.turn_timer_seconds * 1000 : null}
-      spectatorCount={spectatorCount}
-      onMove={() => {}}
-      onExit={onExit}
-    />
+    <div>
+      <LudoBoard
+        seats={seats}
+        state={state}
+        currentSeatIndex={currentSeatIndex}
+        currentSeat={currentSeat}
+        validMoves={validMoves}
+        events={events}
+        result={result}
+        isMyTurn={false}
+        meSeatIndex={null}
+        isAr={isAr}
+        online
+        spectating
+        turnTimeLeftMs={turnTimeLeftMs}
+        turnTimerTotalMs={room?.turn_timer_seconds ? room.turn_timer_seconds * 1000 : null}
+        spectatorCount={spectatorCount}
+        onMove={() => {}}
+        onExit={onExit}
+      />
+      {userId && <MatchChat roomId={roomId} userId={userId} isAr={isAr} />}
+    </div>
   )
 }
 

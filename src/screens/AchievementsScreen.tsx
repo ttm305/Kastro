@@ -67,7 +67,7 @@ export default function AchievementsScreen({ onNavigate, lang, setLang }: Props)
     <div className="screen bg-mesh">
       <TopBar title="Achievements" titleAr="الإنجازات" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
 
-      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+      <div className="pb-nav" style={{ padding: '16px 16px' }}>
         {/* Summary */}
         <div
           className="glass-card"

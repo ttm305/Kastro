@@ -1690,4 +1690,50 @@ export function subscribeToBoardGameRoom(roomId: string, onChange: () => void) {
   return () => supabase.removeChannel(channel)
 }
 
+// ---------------------------------------------------------------------
+// Board game match chat — scoped strictly to one room (players +
+// spectators of that match), never mixed with the friends 1:1 messages
+// table. See 20260718060000_board_game_match_chat.sql for the schema/RLS/
+// retention rationale.
+// ---------------------------------------------------------------------
+export type BoardGameMessage = Tables<'board_game_messages'> & { username?: string; avatar_url?: string | null }
+
+/** Recent match-chat history for a room, oldest first, enriched with sender display info. Only room members can call this (RLS). */
+export async function getBoardGameMessages(roomId: string, limit = 50): Promise<BoardGameMessage[]> {
+  const { data, error } = await supabase
+    .from('board_game_messages')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) { logErr('getBoardGameMessages', error); return [] }
+  const rows = (data ?? []).slice().reverse()
+  if (!rows.length) return rows
+  const senderIds = Array.from(new Set(rows.map((m) => m.sender_id)))
+  const { data: profiles } = await supabase.rpc('get_public_profiles', { p_ids: senderIds })
+  const map = new Map<string, { username: string; avatar_url: string | null }>()
+  for (const p of (profiles as { id: string; username: string; avatar_url: string | null }[] | null) ?? []) map.set(p.id, p)
+  return rows.map((m) => ({ ...m, username: map.get(m.sender_id)?.username, avatar_url: map.get(m.sender_id)?.avatar_url ?? null }))
+}
+
+/** Sends a match-chat message. client_message_id lets a retried call after a dropped network response resolve to the same row instead of double-posting. */
+export async function sendBoardGameMessage(roomId: string, body: string, clientMessageId: string) {
+  const { data, error } = await supabase.rpc('send_board_game_message', {
+    p_room_id: roomId, p_body: body, p_client_message_id: clientMessageId,
+  })
+  if (error) return { error: error.message, id: null }
+  return { error: null, id: data as string }
+}
+
+/** Live new-message updates for one room's chat — separate channel from subscribeToBoardGameRoom so a busy chat doesn't force a full room/players refetch on every message. */
+export function subscribeToBoardGameMessages(roomId: string, onInsert: (row: BoardGameMessage) => void) {
+  const channel = supabase
+    .channel(`board-game-chat:${roomId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'board_game_messages', filter: `room_id=eq.${roomId}` }, (payload) => {
+      onInsert(payload.new as BoardGameMessage)
+    })
+    .subscribe()
+  return () => supabase.removeChannel(channel)
+}
+
 export { supabase }
