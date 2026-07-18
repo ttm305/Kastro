@@ -1,0 +1,77 @@
+import KastroLogo from './KastroLogo'
+
+/**
+ * Premium KASTRO launch splash — shown while the initial Supabase session
+ * check is in flight (AuthProvider's `ready` flag). Purely presentational;
+ * carries no auth/session logic of its own so it can never gate access.
+ * Intentionally always dark (brand cosmic backdrop) regardless of the
+ * user's Appearance setting — same rationale as Login/Reset Password.
+ */
+export default function SplashScreen() {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'radial-gradient(circle at 50% 35%, #1a0a3d 0%, #0d0d28 55%, #03030f 100%)',
+        overflow: 'hidden',
+        zIndex: 9999,
+      }}
+    >
+      <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.8 }} />
+
+      {/* Expanding glow rings behind the mark */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div
+          style={{
+            position: 'absolute', width: 140, height: 140, borderRadius: '50%',
+            border: '1px solid rgba(157,111,255,0.35)', animation: 'pulse-ring 2.2s ease-out infinite',
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute', width: 140, height: 140, borderRadius: '50%',
+            border: '1px solid rgba(0,212,255,0.25)', animation: 'pulse-ring 2.2s ease-out 0.6s infinite',
+          }}
+        />
+        <div style={{ animation: 'scale-in 0.6s cubic-bezier(0.34,1.56,0.64,1) both' }}>
+          <KastroLogo size={88} animated />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 26, animation: 'slide-up 0.5s ease-out 0.25s both' }}>
+        <span
+          className="font-display"
+          style={{
+            fontSize: 30, fontWeight: 900, letterSpacing: '0.06em',
+            background: 'linear-gradient(135deg, #c4b5fd 0%, #00d4ff 100%)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+          }}
+        >
+          KAS<span style={{
+            background: 'linear-gradient(135deg, #ffd700, #ff6b35)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+          }}>TRO</span>
+        </span>
+      </div>
+
+      <p
+        style={{
+          marginTop: 8, fontSize: 12, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase',
+          color: 'rgba(200,200,255,0.4)', animation: 'slide-up 0.5s ease-out 0.4s both',
+        }}
+      >
+        Work. Play. Evolve.
+      </p>
+
+      <div style={{ position: 'absolute', bottom: 48, display: 'flex', gap: 6, animation: 'slide-up 0.5s ease-out 0.55s both' }}>
+        <span className="live-dot" />
+      </div>
+    </div>
+  )
+}

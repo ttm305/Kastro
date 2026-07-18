@@ -1,0 +1,112 @@
+KASTRO — RUN INSTRUCTIONS
+==========================
+
+ROOT CAUSE OF THE BLANK SCREEN (read this first)
+--------------------------------------------------
+Two separate problems combined to produce the blank white screen. Both are
+fixed in this delivery.
+
+1) Missing .env.local (the actual blank-screen trigger).
+   src/lib/supabaseClient.ts reads VITE_SUPABASE_URL and
+   VITE_SUPABASE_PUBLISHABLE_KEY and THROWS immediately if either is
+   missing:
+       if (!url || !key) { throw new Error('Missing VITE_SUPABASE_URL / ...') }
+   That file is imported by almost everything (api.ts, auth.tsx, App.tsx),
+   so the throw happens during the very first module evaluation, before
+   React ever calls render(). Result: blank white page, with the real
+   error only visible in the browser devtools console (or Vite's
+   error overlay).
+   .env.local is deliberately NOT included in this zip — it's in
+   .gitignore because it holds real project credentials, and a zip is not
+   the right place to ship secrets. .env.example (included, safe to ship)
+   already has this project's real URL and publishable key filled in.
+   Fix: run the copy command in step 2 below before starting the app.
+   I did not spell this out in the previous delivery — that omission is
+   on me.
+
+2) ~380 pre-existing TypeScript build errors (blocked `npm run build`,
+   though NOT the blank screen — Vite's dev server doesn't type-check).
+   Root cause, verified with an isolated minimal repro: database.types.ts
+   declared `Functions: { [key: string]: unknown }`. The installed
+   @supabase/supabase-js (2.110.6) requires every schema's Functions block
+   to structurally satisfy `Record<string, { Args; Returns }>` — a bare
+   `unknown` value doesn't qualify. Because that requirement failed, the
+   ENTIRE Database generic failed to bind to the Supabase client, and
+   every single .from()/.rpc() call in the app silently degraded to
+   never/undefined argument types. Fixing the Functions shape to
+   `{ [key: string]: { Args: Record<string, unknown>; Returns: unknown } }`
+   fixed the client-wide binding in one change; the remaining ~65 errors
+   were each a real (if small) fallout from that same root cause — mostly
+   spots that needed an explicit cast because the RPC's real return shape
+   is now `unknown` instead of `never`. All of them are fixed.
+   `npx tsc -b` now completes with ZERO errors, project-wide, no
+   exceptions. package.json also now pins every dependency to the exact
+   version actually installed and tested (previously it said ^2.45.4 for
+   supabase-js while 2.110.6 was installed — that mismatch is fixed too).
+
+WHAT I COULD AND COULD NOT VERIFY MYSELF
+--------------------------------------------------
+My sandbox is Linux (aarch64). This project's node_modules was installed
+on a Mac (darwin-arm64 native bindings for Vite's Rolldown bundler,
+Tailwind's Oxide engine, and oxfmt are all present — that's the tell).
+That means:
+  - I verified `npx tsc -b` end-to-end: 0 errors, confirmed by direct
+    execution in this delivery's exact source tree.
+  - I could NOT execute `npm run dev` or `npm run build` myself — the
+    Rolldown/Tailwind native binaries in node_modules only run on macOS
+    ARM64, and I cannot install the Linux equivalents (no network access
+    to npm's registry from this sandbox). This is a platform mismatch
+    specific to my sandbox, not a defect — it will not affect you running
+    this on your own Mac.
+  - I did not "claim" `npm run dev` opens a visible app, because I was not
+    able to run it. What I'm telling you is grounded in what I actually
+    checked: the two root causes above, fixed and verified where I had the
+    means to verify them, disclosed plainly where I didn't.
+
+No lockfile (package-lock.json / pnpm-lock.yaml) is included. Generating
+one requires either network access to npm's registry (blocked in my
+sandbox) or a non-symlinked node_modules (this sandbox's is a leftover
+symlink into another folder from earlier work and can't be cleaned up
+here) — attempting it produced a lockfile with broken relative paths, so
+I deliberately left it out rather than ship something misleading.
+package.json now pins exact versions, so `npm install` on your machine
+will resolve deterministically to the same versions I tested against.
+
+STEPS TO RUN
+--------------------------------------------------
+1. Unzip this archive and open a terminal in the project folder.
+
+2. Create your local env file (this is the step that was missing before):
+       cp .env.example .env.local
+   .env.example already contains this project's real Supabase URL and
+   publishable key, so no editing is required unless you're pointing at a
+   different Supabase project.
+
+3. Install dependencies:
+       npm install
+   (No lockfile is bundled — see above. This will generate one on your
+   machine.)
+
+4. Start the dev server:
+       npm run dev
+   Open the printed local URL. You should land on the Login screen, not
+   a blank page.
+
+5. Build for production (optional, verifies the full type-check + bundle):
+       npm run build
+   This runs `tsc -b` (now 0 errors) followed by `vite build`.
+
+6. If you still see a blank screen after step 2, open the browser
+   devtools console — any remaining error will be printed there, and it
+   will not be the missing-env-var error from before.
+
+DATABASE / MIGRATIONS
+--------------------------------------------------
+The Friends + Chat schema is already applied to your live Supabase
+project (pagwybefqbnqrqigvvrw) — no migration step is needed to use the
+app. supabase/migrations/ in this zip contains the two new migrations
+from tonight's build (20260716200629_friends_chat_tables.sql,
+20260716200757_friends_chat_functions.sql), reconstructed from the live
+schema so they're versioned in the repo. See
+supabase/migrations/README.md for why that folder doesn't contain the
+project's full migration history.

@@ -1,0 +1,896 @@
+@import url('https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=Cairo:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+}
+
+:root {
+  /* ── Core palette (dark, default) ── */
+  --background: #03030f;
+  --surface-1: #08081e;
+  --surface-2: #0d0d28;
+  --surface-3: rgba(255,255,255,0.04);
+  --foreground: #eeeeff;
+  --foreground-muted: rgba(200,200,255,0.65);
+  --foreground-dim: rgba(180,180,230,0.45);
+
+  /* ── RGB triplets used by rgba(var(--x-rgb), alpha) throughout the app.
+     This lets every existing translucent-white/lavender overlay (borders,
+     glass fills, faint text) flip correctly in light mode while preserving
+     its exact original alpha value — nothing here changes how dark mode
+     looks today. ── */
+  --bg-rgb: 3,3,15;         /* base of --background */
+  --fg-rgb: 255,255,255;    /* base of "white" overlays: borders, glass, chrome */
+  --fg2-rgb: 200,200,255;   /* base of muted lavender text overlays */
+  --shadow-rgb: 0,0,0;      /* drop-shadow base */
+
+  --border: rgba(var(--fg-rgb), 0.07);
+  --border-soft: rgba(var(--fg-rgb), 0.1);
+
+  /* ── Brand colors ── */
+  --violet: #7c3aed;
+  --violet-bright: #9d6fff;
+  --violet-glow: rgba(124,58,237,0.35);
+  --cyan: #00d4ff;
+  --cyan-glow: rgba(0,212,255,0.3);
+  --gold: #ffd700;
+  --gold-light: #ffe94d;
+  --gold-glow: rgba(255,215,0,0.35);
+  --fire: #ff6b35;
+  --fire-glow: rgba(255,107,53,0.35);
+  --emerald: #00e676;
+  --emerald-glow: rgba(0,230,118,0.25);
+  --rose: #ff4785;
+  --rose-glow: rgba(255,71,133,0.25);
+
+  /* ── Rank tier colors ── */
+  --rank-bronze: #cd7f32;
+  --rank-silver: #c0c0c0;
+  --rank-gold: #ffd700;
+  --rank-diamond: #00d4ff;
+  --rank-legend: #ff6b35;
+
+  /* ── Token map ── */
+  --primary: var(--violet);
+  --primary-foreground: #ffffff;
+  --card: var(--surface-3);
+  --card-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground-muted);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--foreground-dim);
+  --accent: var(--cyan);
+  --accent-foreground: #03030f;
+  --ring: var(--violet);
+
+  --radius: 18px;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   LIGHT THEME — Priority 2: Appearance (Light / Dark / System)
+   Activated via <html data-theme="light">, set by src/lib/theme.tsx
+   (and mirrored pre-paint by the bootstrap script in index.html).
+   Brand accent colors (violet/cyan/gold/fire/emerald/rose) are left
+   unchanged on purpose — they ARE the KASTRO identity in both modes.
+   Only the neutral chrome (backgrounds, surfaces, text, borders)
+   is redesigned for a bright, professional look instead of an
+   inverted "white background" hack.
+   ═══════════════════════════════════════════════════════════ */
+:root[data-theme='light'] {
+  --background: #f3f4fb;
+  --surface-1: #ffffff;
+  --surface-2: #eceefa;
+  --surface-3: rgba(23,23,55,0.035);
+  --foreground: #15152e;
+  --foreground-muted: rgba(30,30,65,0.62);
+  --foreground-dim: rgba(30,30,65,0.42);
+
+  --bg-rgb: 243,244,251;
+  --fg-rgb: 20,20,50;
+  --fg2-rgb: 45,45,95;
+  --shadow-rgb: 30,30,70;
+
+  --border: rgba(var(--fg-rgb), 0.1);
+  --border-soft: rgba(var(--fg-rgb), 0.14);
+
+  --primary-foreground: #ffffff;
+  --card-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground-muted);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--foreground-dim);
+  --accent-foreground: #ffffff;
+}
+
+/* Body-level gradient wash (desktop/tablet, see @media block below) and the
+   .bg-game / .bg-mesh radial washes read as very dark-tinted in light mode
+   with the same rgba alphas — soften them here so light mode doesn't look
+   like a hazy dark-mode leftover. */
+:root[data-theme='light'] body {
+  background:
+    radial-gradient(ellipse 900px 640px at 50% -10%, rgba(124,58,237,0.07), transparent 60%),
+    radial-gradient(ellipse 700px 500px at 100% 100%, rgba(0,212,255,0.05), transparent 60%),
+    var(--background);
+}
+:root[data-theme='light'] .bg-game {
+  background:
+    radial-gradient(ellipse 100% 70% at 10% 0%, rgba(124,58,237,0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 100%, rgba(0,212,255,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(255,107,53,0.03) 0%, transparent 50%),
+    var(--background);
+}
+:root[data-theme='light'] .bg-mesh {
+  background:
+    radial-gradient(ellipse 90% 60% at 15% -5%, rgba(124,58,237,0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 55% at 100% 15%, rgba(0,212,255,0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 80% 60% at 50% 105%, rgba(255,71,133,0.04) 0%, transparent 55%),
+    var(--background);
+}
+:root[data-theme='light'] .bg-stars { opacity: 0.35; }
+:root[data-theme='light'] .app-shell {
+  box-shadow: 0 30px 90px rgba(30,30,70,0.12), 0 0 0 1px rgba(20,20,50,0.04) inset;
+}
+:root[data-theme='light'] .bottom-nav {
+  background: rgba(255,255,255,0.85);
+  border-top: 1px solid var(--border);
+}
+:root[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background: rgba(124,58,237,0.3);
+}
+/* Grayscale filter reads muddy on a light background — swap for reduced opacity only. */
+:root[data-theme='light'] .nav-item:not(.active) .nav-icon { filter: none; opacity: 0.45; }
+
+/* ─── Reset ─── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  min-height: 100dvh;
+}
+
+/* ─── App shell / responsive breakpoints ───
+   The product is a single-column, mobile-first experience by design (a
+   "phone-shaped" card), which is intentional and unchanged here. What was
+   missing: on tablet/desktop viewports the shell just sat flush against a
+   flat background with zero visual treatment, and the whole stylesheet had
+   no breakpoints at all. This gives the same mobile layout real presence on
+   larger screens instead of looking unfinished, without altering it. */
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+}
+@media (min-width: 640px) {
+  body {
+    background:
+      radial-gradient(ellipse 900px 640px at 50% -10%, rgba(124,58,237,0.16), transparent 60%),
+      radial-gradient(ellipse 700px 500px at 100% 100%, rgba(0,212,255,0.08), transparent 60%),
+      var(--background);
+  }
+  .app-shell {
+    margin-top: 28px;
+    margin-bottom: 28px;
+    min-height: calc(100dvh - 56px) !important;
+    border-radius: 28px;
+    border: 1px solid rgba(157,111,255,0.14);
+    box-shadow: 0 30px 90px rgba(0,0,0,0.55), 0 0 0 1px rgba(var(--fg-rgb),0.02) inset;
+    overflow: hidden;
+  }
+}
+
+/* ─── Typography ─── */
+.font-display { font-family: 'Exo 2', sans-serif; }
+.font-cairo { font-family: 'Cairo', sans-serif; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+[dir="rtl"], [lang="ar"] { font-family: 'Cairo', sans-serif; }
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(124,58,237,0.25); border-radius: 2px; }
+
+/* ─── Backgrounds ─── */
+.bg-game {
+  background:
+    radial-gradient(ellipse 100% 70% at 10% 0%, rgba(124,58,237,0.18) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 100%, rgba(0,212,255,0.12) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(255,107,53,0.05) 0%, transparent 50%),
+    var(--background);
+}
+
+/* Used across several full-screen gameplay/modal views (GameLobby, CasualGame,
+   WorkGame, Friends, Achievements, Rewards, WeeklyChallenge, and the new
+   match-engine screens) — was referenced but never defined, so those screens
+   silently fell back to the flat background color with no depth. */
+.bg-mesh {
+  background:
+    radial-gradient(ellipse 90% 60% at 15% -5%, rgba(124,58,237,0.16) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 55% at 100% 15%, rgba(0,212,255,0.1) 0%, transparent 55%),
+    radial-gradient(ellipse 80% 60% at 50% 105%, rgba(255,71,133,0.06) 0%, transparent 55%),
+    var(--background);
+}
+
+.bg-stars {
+  background-image:
+    radial-gradient(1px 1px at 20% 30%, rgba(var(--fg-rgb),0.25) 0%, transparent 100%),
+    radial-gradient(1px 1px at 60% 20%, rgba(var(--fg-rgb),0.15) 0%, transparent 100%),
+    radial-gradient(1px 1px at 80% 60%, rgba(200,200,255,0.2) 0%, transparent 100%),
+    radial-gradient(1px 1px at 40% 70%, rgba(var(--fg-rgb),0.1) 0%, transparent 100%),
+    radial-gradient(1px 1px at 90% 40%, rgba(var(--fg-rgb),0.2) 0%, transparent 100%);
+}
+
+/* ─── Glass system ─── */
+.glass {
+  background: rgba(var(--fg-rgb),0.04);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(var(--fg-rgb),0.08);
+}
+.glass-violet {
+  background: rgba(124,58,237,0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(124,58,237,0.2);
+}
+.glass-gold {
+  background: rgba(255,215,0,0.06);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,215,0,0.2);
+}
+.glass-fire {
+  background: rgba(255,107,53,0.07);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,107,53,0.2);
+}
+.glass-cyan {
+  background: rgba(0,212,255,0.06);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0,212,255,0.18);
+}
+.card {
+  background: rgba(var(--fg-rgb),0.04);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(var(--fg-rgb),0.07);
+  border-radius: 20px;
+}
+.card-sm { border-radius: 14px; }
+.card-lg { border-radius: 24px; }
+
+/* ─── Elevated / floating overlay panels (dropdowns, popovers) ───
+   .card's 4%-alpha background relies almost entirely on backdrop-filter
+   blur to read as "frosted glass" — fine for a card sitting in the normal
+   page flow against a calm background, but floating panels (notification
+   dropdown, and any future popover) render on TOP of arbitrarily busy
+   content (starfield, gradients, other cards) inside a `position:
+   absolute` stacking context. iOS WebKit — both mobile Safari and the
+   native WKWebView a Capacitor build uses — has long-standing bugs where
+   backdrop-filter silently fails to composite for absolutely-positioned
+   elements in certain stacking contexts, leaving only the near-invisible
+   4% base fill behind text. That's the exact "excessively transparent on
+   iPhone" symptom.
+
+   Fix: give floating panels a near-opaque, theme-aware base (same
+   var(--bg-rgb) technique already used by .bottom-nav below, which does
+   NOT have this bug) so the panel is fully readable whether or not the
+   blur renders, then still layer backdrop-filter blur on top as a
+   progressive enhancement for the premium glass look when it does
+   composite. This only touches floating overlays — .card itself (used
+   throughout the app for in-page surfaces) is unchanged. */
+.panel-elevated {
+  background: rgba(var(--bg-rgb), 0.94);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(var(--fg-rgb), 0.12);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(var(--shadow-rgb), 0.4), 0 0 0 1px rgba(124,58,237,0.08) inset;
+}
+/* Browsers/WebViews with zero backdrop-filter support (older Android
+   System WebView, some embedded webviews): go fully solid instead of
+   leaving a translucent panel with no blur to compensate. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .panel-elevated { background: rgb(var(--bg-rgb)); }
+}
+/* Respect the OS "Reduce Transparency" accessibility setting (exposed to
+   both WebKit and Chromium as prefers-reduced-transparency). Go fully
+   solid and drop the blur rather than leaving any translucency. */
+@media (prefers-reduced-transparency: reduce) {
+  .panel-elevated {
+    background: rgb(var(--bg-rgb));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* ─── Glows ─── */
+.glow-violet { box-shadow: 0 0 24px var(--violet-glow), 0 0 60px rgba(124,58,237,0.08); }
+.glow-cyan { box-shadow: 0 0 24px var(--cyan-glow), 0 0 60px rgba(0,212,255,0.06); }
+.glow-gold { box-shadow: 0 0 24px var(--gold-glow), 0 0 60px rgba(255,215,0,0.08); }
+.glow-fire { box-shadow: 0 0 24px var(--fire-glow); }
+
+/* ─── Gradients ─── */
+.grad-violet { background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%); }
+.grad-cyan { background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%); }
+.grad-gold { background: linear-gradient(135deg, #ffd700 0%, #f59e0b 100%); }
+.grad-fire { background: linear-gradient(135deg, #ff6b35 0%, #e53e3e 100%); }
+.grad-emerald { background: linear-gradient(135deg, #00e676 0%, #059669 100%); }
+.grad-rose { background: linear-gradient(135deg, #ff4785 0%, #9d174d 100%); }
+.grad-cosmic { background: linear-gradient(135deg, #7c3aed 0%, #00d4ff 100%); }
+.grad-aurora { background: linear-gradient(135deg, #ff6b35 0%, #7c3aed 50%, #00d4ff 100%); }
+
+.text-violet { color: var(--violet-bright); }
+.text-cyan { color: var(--cyan); }
+.text-gold { color: var(--gold); }
+.text-gold-light { color: var(--gold-light); }
+.text-fire { color: var(--fire); }
+.text-emerald { color: var(--emerald); }
+.text-muted { color: var(--foreground-muted); }
+.text-dim { color: var(--foreground-dim); }
+
+.grad-text-violet {
+  background: linear-gradient(135deg, #c4b5fd, #7c3aed);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.grad-text-gold {
+  background: linear-gradient(135deg, var(--gold-light), var(--gold));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.grad-text-cosmic {
+  background: linear-gradient(135deg, #c4b5fd 0%, #00d4ff 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.grad-text-fire {
+  background: linear-gradient(135deg, #ffd700, #ff6b35);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+
+/* ─── XP Bar ─── */
+.xp-track {
+  background: rgba(var(--fg-rgb),0.06);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+.xp-fill {
+  /* Always full width; the visual fill level is driven by a GPU-composited
+     transform (scaleX) rather than animating `width`, so progress fills
+     stay smooth at 60fps instead of forcing layout on every frame. Callers
+     pass --xp-pct (0-1) and set transform-origin for LTR/RTL via inline style. */
+  width: 100%;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #7c3aed, #00d4ff);
+  position: relative;
+  transform: scaleX(var(--xp-pct, 0));
+  transform-origin: left center;
+  transition: transform 1.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+[dir='rtl'] .xp-fill { transform-origin: right center; }
+.xp-fill::after {
+  /* Glow tip sits at the fill's leading (growing) edge: right in LTR, left in RTL. */
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  background: rgba(var(--fg-rgb),0.6);
+  border-radius: 99px;
+  filter: blur(4px);
+}
+[dir='rtl'] .xp-fill::after { right: auto; left: 0; }
+.xp-fill-gold {
+  background: linear-gradient(90deg, #f59e0b, #ffd700);
+}
+.xp-fill-fire {
+  background: linear-gradient(90deg, #ff6b35, #ffd700);
+}
+
+/* .xp-bar / .xp-bar-fill — same track+fill pattern as .xp-track/.xp-fill above,
+   used by Achievements, Weekly Challenge, and the in-game countdown timers.
+   (Previously referenced across 4 screens with no matching CSS at all — the
+   bars rendered with no track background, radius, or clipping.) */
+.xp-bar {
+  background: rgba(var(--fg-rgb),0.06);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+.xp-bar-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #7c3aed, #00d4ff);
+  transform: scaleX(var(--xp-pct, 0));
+  transform-origin: left center;
+  transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+[dir='rtl'] .xp-bar-fill { transform-origin: right center; }
+
+/* ─── Rank auras ─── */
+.aura-bronze { box-shadow: 0 0 0 2px rgba(205,127,50,0.5), 0 0 20px rgba(205,127,50,0.25); }
+.aura-silver { box-shadow: 0 0 0 2px rgba(192,192,192,0.5), 0 0 20px rgba(192,192,192,0.2); }
+.aura-gold { box-shadow: 0 0 0 2px rgba(255,215,0,0.6), 0 0 20px rgba(255,215,0,0.3); }
+.aura-diamond { box-shadow: 0 0 0 2px rgba(0,212,255,0.6), 0 0 24px rgba(0,212,255,0.35); }
+.aura-legend { box-shadow: 0 0 0 2px rgba(255,107,53,0.7), 0 0 30px rgba(255,107,53,0.4), 0 0 60px rgba(124,58,237,0.2); }
+
+/* ─── Buttons ─── */
+.btn {
+  border: none; cursor: pointer; font-weight: 700;
+  border-radius: 14px; transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: 'Inter', sans-serif;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: white; padding: 14px 28px; font-size: 15px;
+  box-shadow: 0 4px 20px rgba(124,58,237,0.4), inset 0 1px 0 rgba(var(--fg-rgb),0.12);
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(124,58,237,0.55); }
+.btn-primary:active { transform: translateY(0); }
+.btn-gold {
+  background: linear-gradient(135deg, #ffd700, #f59e0b);
+  color: #03030f; padding: 14px 28px; font-size: 15px; font-weight: 800;
+  box-shadow: 0 4px 20px rgba(255,215,0,0.4);
+}
+.btn-gold:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(255,215,0,0.5); }
+.btn-fire {
+  background: linear-gradient(135deg, #ff6b35, #e53e3e);
+  color: white; padding: 14px 28px; font-size: 15px;
+  box-shadow: 0 4px 20px rgba(255,107,53,0.4);
+}
+.btn-ghost {
+  background: rgba(var(--fg-rgb),0.06); color: var(--foreground);
+  border: 1px solid rgba(var(--fg-rgb),0.1); padding: 14px 28px; font-size: 15px;
+}
+.btn-ghost:hover { background: rgba(var(--fg-rgb),0.1); }
+.btn-sm { padding: 8px 16px; font-size: 13px; border-radius: 10px; }
+.btn-xs { padding: 6px 12px; font-size: 11px; border-radius: 8px; font-weight: 700; }
+
+/* ─── Input ─── */
+input, textarea {
+  background: rgba(var(--fg-rgb),0.05);
+  border: 1px solid rgba(var(--fg-rgb),0.09);
+  border-radius: 14px;
+  color: var(--foreground);
+  padding: 14px 16px;
+  font-size: 15px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  font-family: 'Inter', sans-serif;
+}
+input:focus, textarea:focus {
+  border-color: rgba(124,58,237,0.5);
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
+}
+input::placeholder, textarea::placeholder { color: rgba(var(--fg-rgb),0.25); }
+
+/* ─── Badges ─── */
+.badge {
+  font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 99px;
+  letter-spacing: 0.06em; text-transform: uppercase; display: inline-flex; align-items: center; gap: 4px;
+}
+.badge-new { background: linear-gradient(135deg, #ffd700, #f59e0b); color: #03030f; }
+.badge-hot { background: linear-gradient(135deg, #ff4785, #be185d); color: white; }
+.badge-live {
+  background: linear-gradient(135deg, #00e676, #059669); color: #03030f;
+  animation: badge-live-pulse 2s ease-in-out infinite;
+}
+.badge-boost { background: linear-gradient(135deg, #00d4ff, #0099cc); color: #03030f; }
+.badge-soon { background: rgba(var(--fg-rgb),0.08); color: rgba(var(--fg-rgb),0.35); border: 1px solid rgba(var(--fg-rgb),0.1); }
+
+/* ─── Bottom Nav ─── */
+.bottom-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(var(--bg-rgb),0.92);
+  backdrop-filter: blur(40px); -webkit-backdrop-filter: blur(40px);
+  border-top: 1px solid rgba(var(--fg-rgb),0.07);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.nav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 6px; cursor: pointer; flex: 1; border: none; background: none;
+  position: relative; transition: all 0.2s ease;
+}
+.nav-item .nav-icon { font-size: 20px; transition: transform 0.2s ease; }
+.nav-item .nav-label { font-size: 9px; font-weight: 600; letter-spacing: 0.04em; transition: color 0.2s; text-transform: uppercase; }
+.nav-item.active .nav-icon { transform: scale(1.1); }
+.nav-item.active .nav-label { color: #9d6fff; }
+.nav-item:not(.active) .nav-icon { filter: grayscale(0.3); opacity: 0.55; }
+.nav-item:not(.active) .nav-label { color: rgba(var(--fg-rgb),0.42); }
+.nav-pip {
+  position: absolute; top: 6px; width: 5px; height: 5px;
+  background: #9d6fff; border-radius: 50%;
+  box-shadow: 0 0 10px #9d6fff;
+}
+.pb-nav { padding-bottom: calc(80px + env(safe-area-inset-bottom, 8px)); }
+.screen { min-height: 100dvh; }
+
+/* ─── Streak fire ─── */
+.streak-fire {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  filter: drop-shadow(0 0 8px rgba(255,107,53,0.7));
+  animation: fire-dance 0.8s ease-in-out infinite alternate;
+}
+
+/* ─── Live dot ─── */
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--emerald);
+  animation: live-pulse 1.4s ease-in-out infinite;
+  display: inline-block;
+}
+
+/* ─── Card hover ─── */
+.card-hover {
+  transition: transform 0.2s cubic-bezier(0.4,0,0.2,1), box-shadow 0.2s ease;
+  cursor: pointer;
+}
+.card-hover:hover { transform: translateY(-4px); }
+
+/* ─── Separator ─── */
+.sep { height: 1px; background: rgba(var(--fg-rgb),0.06); }
+
+/* ─── Scrollable horizontal ─── */
+.scroll-x {
+  overflow-x: auto; display: flex; gap: 10px;
+  scrollbar-width: none; -ms-overflow-style: none; padding-bottom: 2px;
+}
+.scroll-x::-webkit-scrollbar { display: none; }
+
+/* ══════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════ */
+
+@keyframes badge-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,230,118,0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(0,230,118,0); }
+}
+
+@keyframes fire-dance {
+  from { transform: scaleY(1) rotate(-2deg); }
+  to { transform: scaleY(1.08) rotate(2deg); }
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+@keyframes float-up {
+  0% { opacity: 0; transform: translateY(0); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-60px); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+@keyframes level-burst {
+  0% { transform: scale(0.5); opacity: 0; }
+  40% { transform: scale(1.15); opacity: 1; }
+  70% { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes orbit {
+  from { transform: rotate(0deg) translateX(20px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(20px) rotate(-360deg); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes xp-bar-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(124,58,237,0.5); }
+  50% { box-shadow: 0 0 20px rgba(0,212,255,0.6); }
+}
+
+@keyframes crown-float {
+  0%, 100% { transform: translateY(0) rotate(-5deg); }
+  50% { transform: translateY(-6px) rotate(5deg); }
+}
+
+@keyframes star-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(60px) rotate(720deg); opacity: 0; }
+}
+
+@keyframes rank-up-flash {
+  0% { background: rgba(255,215,0,0); }
+  30% { background: rgba(255,215,0,0.15); }
+  100% { background: rgba(255,215,0,0); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+@keyframes neon-flicker {
+  0%, 95%, 100% { opacity: 1; }
+  96% { opacity: 0.7; }
+  98% { opacity: 0.9; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.animate-slide-up { animation: slide-up 0.4s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-scale-in { animation: scale-in 0.35s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-level-burst { animation: level-burst 0.6s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+.animate-crown { animation: crown-float 2.5s ease-in-out infinite; }
+.animate-neon { animation: neon-flicker 4s ease-in-out infinite; }
+.animate-shake { animation: shake 0.4s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-pop { animation: scale-in 0.25s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+/* ─── Match engine (Emoji Decode / Color Blitz / future games) ─── */
+@keyframes ring-countdown {
+  from { stroke-dashoffset: 0; }
+}
+@keyframes correct-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+  100% { transform: scale(1); }
+}
+.animate-correct-pop { animation: correct-pop 0.45s cubic-bezier(0.4,0,0.2,1) both; }
+@keyframes wrong-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px) rotate(-1deg); }
+  40% { transform: translateX(6px) rotate(1deg); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+.animate-wrong-shake { animation: wrong-shake 0.4s cubic-bezier(0.4,0,0.2,1) both; }
+@keyframes tile-reveal {
+  0% { transform: scale(0.85); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-tile-reveal { animation: tile-reveal 0.25s cubic-bezier(0.34,1.56,0.64,1) both; }
+@keyframes get-ready-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+.animate-get-ready { animation: get-ready-pulse 0.7s ease-in-out infinite; }
+
+.shimmer-bg {
+  background: linear-gradient(90deg, transparent 0%, rgba(var(--fg-rgb),0.06) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* ─── Game world themes ─── */
+.world-safety {
+  background: linear-gradient(135deg, #1a0505 0%, #2d0808 50%, #0d0d28 100%);
+  border-color: rgba(239,68,68,0.25);
+}
+.world-procedure {
+  background: linear-gradient(135deg, #041228 0%, #0a1f3d 50%, #0d0d28 100%);
+  border-color: rgba(0,212,255,0.2);
+}
+.world-target {
+  background: linear-gradient(135deg, #071a0f 0%, #0d2d17 50%, #0d0d28 100%);
+  border-color: rgba(0,230,118,0.2);
+}
+.world-compliance {
+  background: linear-gradient(135deg, #140520 0%, #1e0836 50%, #0d0d28 100%);
+  border-color: rgba(157,111,255,0.25);
+}
+.world-process {
+  background: linear-gradient(135deg, #041a1a 0%, #082828 50%, #0d0d28 100%);
+  border-color: rgba(0,212,255,0.18);
+}
+.world-data {
+  background: linear-gradient(135deg, #04082a 0%, #08123d 50%, #0d0d28 100%);
+  border-color: rgba(59,130,246,0.22);
+}
+.world-team {
+  background: linear-gradient(135deg, #1a0e04 0%, #2d1a08 50%, #0d0d28 100%);
+  border-color: rgba(245,158,11,0.2);
+}
+.world-policy {
+  background: linear-gradient(135deg, #1a1504 0%, #2d2508 50%, #0d0d28 100%);
+  border-color: rgba(255,215,0,0.2);
+}
+.world-clash {
+  background: linear-gradient(135deg, #1a0416 0%, #2d083f 50%, #0d0d28 100%);
+  border-color: rgba(255,71,133,0.25);
+}
+.world-puzzle {
+  background: linear-gradient(135deg, #041a12 0%, #0a2d20 50%, #0d0d28 100%);
+  border-color: rgba(0,230,118,0.2);
+}
+
+/* ─── Season pass track ─── */
+.season-node {
+  width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0; position: relative; transition: all 0.3s ease;
+  cursor: pointer;
+}
+.season-node.claimed {
+  background: linear-gradient(135deg, #7c3aed, #00d4ff);
+  box-shadow: 0 0 16px rgba(124,58,237,0.4);
+}
+.season-node.current {
+  background: linear-gradient(135deg, #ffd700, #f59e0b);
+  box-shadow: 0 0 20px rgba(255,215,0,0.5);
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+.season-node.locked {
+  background: rgba(var(--fg-rgb),0.06);
+  border: 1px dashed rgba(var(--fg-rgb),0.15);
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+
+/* ─── Tournament bracket ─── */
+.bracket-match {
+  background: rgba(var(--fg-rgb),0.04);
+  border: 1px solid rgba(var(--fg-rgb),0.07);
+  border-radius: 12px; overflow: hidden;
+}
+.bracket-player {
+  padding: 8px 12px; display: flex; align-items: center; gap: 8px; font-size: 13px;
+}
+.bracket-player.winner { background: rgba(124,58,237,0.15); border-left: 2px solid var(--violet-bright); }
+.bracket-player:not(.winner) + .bracket-player { border-top: 1px solid rgba(var(--fg-rgb),0.06); }
+
+/* ─── Faction war ─── */
+.faction-bar {
+  height: 10px; border-radius: 99px; overflow: hidden;
+  background: rgba(var(--fg-rgb),0.06); position: relative;
+}
+.faction-fill-a { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #7c3aed, #9d6fff); border-radius: 99px; transition: width 1s ease; }
+.faction-fill-b { position: absolute; right: 0; top: 0; bottom: 0; background: linear-gradient(270deg, #00d4ff, #0099cc); border-radius: 99px; transition: width 1s ease; }
+
+/* ─── Rank change badges ─── */
+.rank-up {
+  color: #00e676; font-weight: 800; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 2px;
+  animation: rank-delta-in 0.5s cubic-bezier(0.4,0,0.2,1) both;
+}
+.rank-down {
+  color: #ff4785; font-weight: 800; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 2px;
+  animation: rank-delta-in 0.5s cubic-bezier(0.4,0,0.2,1) both;
+}
+.rank-same { color: rgba(200,200,255,0.3); font-size: 11px; }
+
+/* ─── Badge rarity ─── */
+.rarity-common   { color: #9ca3af; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.rarity-rare     { color: #60a5fa; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.rarity-epic     { color: #c084fc; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.rarity-legendary{ color: #ffd700; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+
+/* ─── XP float label ─── */
+.xp-float {
+  position: fixed; pointer-events: none; z-index: 9999;
+  font-family: 'Exo 2', sans-serif; font-weight: 900; font-size: 22px;
+  color: #9d6fff; text-shadow: 0 0 20px rgba(157,111,255,0.6);
+  animation: float-up 1.2s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+
+/* ─── Confetti container ─── */
+.confetti-wrap { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }
+.confetti-piece {
+  position: absolute; top: -20px;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  animation: confetti-cascade var(--dur, 2s) var(--delay, 0s) ease-in forwards;
+}
+
+/* ─── Card active press ─── */
+.card-hover:active { transform: scale(0.97) !important; transition: transform 0.1s ease !important; }
+
+/* ─── Return engagement ─── */
+.event-banner {
+  border-radius: 18px; padding: 16px 18px; position: relative; overflow: hidden;
+  cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.event-banner:hover { transform: translateY(-2px); }
+.event-banner:active { transform: scale(0.98); }
+
+/* ─── Leaderboard podium ─── */
+.podium-glow-1 { box-shadow: 0 0 0 3px rgba(255,215,0,0.6), 0 0 32px rgba(255,215,0,0.35), 0 0 60px rgba(255,215,0,0.15); }
+.podium-glow-2 { box-shadow: 0 0 0 2px rgba(0,212,255,0.5), 0 0 24px rgba(0,212,255,0.3); }
+.podium-glow-3 { box-shadow: 0 0 0 2px rgba(255,107,53,0.5), 0 0 20px rgba(255,107,53,0.25); }
+
+/* ─── Misc ─── */
+.no-select { user-select: none; -webkit-user-select: none; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── Additional keyframes ─── */
+@keyframes rank-delta-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.8); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes confetti-cascade {
+  0%   { transform: translateY(0) translateX(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) translateX(var(--drift, 20px)) rotate(720deg); opacity: 0; }
+}
+
+@keyframes badge-reveal {
+  0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
+  60%  { transform: scale(1.2) rotate(8deg); opacity: 1; }
+  80%  { transform: scale(0.92) rotate(-4deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.animate-badge-reveal { animation: badge-reveal 0.7s cubic-bezier(0.4,0,0.2,1) both; }
+
+@keyframes glow-pulse {
+  0%, 100% { filter: brightness(1) drop-shadow(0 0 4px currentColor); }
+  50%       { filter: brightness(1.3) drop-shadow(0 0 12px currentColor); }
+}
+.animate-glow-pulse { animation: glow-pulse 2s ease-in-out infinite; }
+
+@keyframes rank-up-anim {
+  0%   { transform: translateY(12px); opacity: 0; background: rgba(0,230,118,0.15); }
+  40%  { background: rgba(0,230,118,0.1); }
+  100% { transform: translateY(0); opacity: 1; background: transparent; }
+}
+.animate-rank-up { animation: rank-up-anim 0.6s cubic-bezier(0.4,0,0.2,1) both; }
+
+@keyframes rank-down-anim {
+  0%   { transform: translateY(-8px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.animate-rank-down { animation: rank-down-anim 0.5s ease both; }
+
+@keyframes xp-fill-burst {
+  0%   { box-shadow: 0 0 0 0 rgba(157,111,255,0.5); }
+  50%  { box-shadow: 0 0 0 6px rgba(157,111,255,0.15); }
+  100% { box-shadow: 0 0 0 0 rgba(157,111,255,0); }
+}
+.xp-fill-burst { animation: xp-fill-burst 0.6s ease-out; }

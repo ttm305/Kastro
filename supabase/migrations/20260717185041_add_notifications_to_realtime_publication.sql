@@ -1,0 +1,21 @@
+-- CRITICAL finding from this delivery's testing pass (section 9): the
+-- `notifications` table was never added to the `supabase_realtime`
+-- publication, even though api.ts's subscribeToNotifications() and
+-- subscribeToNewNotifications() both subscribe to `postgres_changes` on
+-- it. Postgres logical replication (which Supabase Realtime's
+-- postgres_changes feature is built on) only emits change events for
+-- tables actually in the publication — for every table NOT listed,
+-- `.on('postgres_changes', ...)` silently subscribes to nothing and never
+-- fires, with no error surfaced anywhere in the client.
+--
+-- This is very likely a root-cause contributor to (or the entire cause
+-- of) the user-reported "No in-app notification appears when a new
+-- message arrives" bug: NotificationsBell's realtime badge,
+-- AchievementOverlayHost's level-up/badge-unlock popups, and this
+-- delivery's new ChatToastHost message-toast are ALL built on realtime
+-- notification inserts — none of them could ever have received a live
+-- push, on any feature, until this was fixed. (They'd still show correct
+-- data on next full reload/poll, which is presumably why this went
+-- unnoticed rather than presenting as a hard failure.)
+
+alter publication supabase_realtime add table public.notifications;

@@ -1,0 +1,328 @@
+import { useEffect, useState } from 'react'
+import type { CSSProperties } from 'react'
+import type { Screen, Lang } from '../App'
+import TopBar from '../components/TopBar'
+import Avatar from '../components/Avatar'
+import { useAuth } from '../lib/auth'
+import {
+  getCurrentChallenge,
+  getChallengeParticipants,
+  getMyChallengeParticipation,
+  joinChallenge,
+  type ChallengePeriod,
+} from '../lib/api'
+
+interface Props {
+  onNavigate: (s: Screen) => void
+  onNavigateToGame: (s: Screen, gameId?: string, context?: { type: 'practice' | 'challenge' | 'tournament'; refId?: string }) => void
+  /** Returns to whichever screen the user actually came from (Home or Profile quick-links), falling back to Home. */
+  onBack?: () => void
+  lang: Lang
+  setLang: (l: Lang) => void
+}
+
+type Challenge = NonNullable<Awaited<ReturnType<typeof getCurrentChallenge>>>
+type Prize = Challenge['challenge_prizes'][number]
+type Participant = Awaited<ReturnType<typeof getChallengeParticipants>>[number]
+type Participation = Awaited<ReturnType<typeof getMyChallengeParticipation>>
+
+const PERIODS: { key: ChallengePeriod; en: string; ar: string }[] = [
+  { key: 'daily', en: 'Daily', ar: 'يومي' },
+  { key: 'weekly', en: 'Weekly', ar: 'أسبوعي' },
+  { key: 'monthly', en: 'Monthly', ar: 'شهري' },
+  { key: 'seasonal', en: 'Seasonal', ar: 'موسمي' },
+]
+
+const PRIZE_TILE_STYLES = [
+  { icon: '🥇', color: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.3)' },
+  { icon: '🥈', color: 'rgba(156,163,175,0.1)', border: 'rgba(156,163,175,0.2)' },
+  { icon: '🥉', color: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.25)' },
+]
+
+const pad2 = (n: number) => String(Math.max(0, n)).padStart(2, '0')
+
+function getRemaining(endsAt: string) {
+  const diff = new Date(endsAt).getTime() - Date.now()
+  const total = Math.max(0, diff)
+  const days = Math.floor(total / 86400000)
+  const hours = Math.floor((total % 86400000) / 3600000)
+  const mins = Math.floor((total % 3600000) / 60000)
+  const secs = Math.floor((total % 60000) / 1000)
+  return { days, hours, mins, secs }
+}
+
+export default function WeeklyChallengeScreen({ onNavigate: _onNavigate, onNavigateToGame, onBack, lang, setLang }: Props) {
+  const isAr = lang === 'ar'
+  const { profile } = useAuth()
+
+  const [period, setPeriod] = useState<ChallengePeriod>('weekly')
+  const [challenge, setChallenge] = useState<Challenge | null>(null)
+  const [participation, setParticipation] = useState<Participation>(null)
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [loading, setLoading] = useState(true)
+  const [joining, setJoining] = useState(false)
+  const [remaining, setRemaining] = useState({ days: 0, hours: 0, mins: 0, secs: 0 })
+
+  const loadParticipation = async (challengeId: string, userId: string) => {
+    const [p, list] = await Promise.all([
+      getMyChallengeParticipation(challengeId, userId),
+      getChallengeParticipants(challengeId),
+    ])
+    setParticipation(p)
+    setParticipants(list)
+  }
+
+  useEffect(() => {
+    if (!profile) return
+    let mounted = true
+    ;(async () => {
+      setLoading(true)
+      setChallenge(null)
+      setParticipation(null)
+      setParticipants([])
+      const c = await getCurrentChallenge(period)
+      if (!mounted) return
+      setChallenge(c)
+      if (c) await loadParticipation(c.id, profile.id)
+      if (mounted) setLoading(false)
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [profile?.id, period])
+
+  useEffect(() => {
+    if (!challenge) return
+    setRemaining(getRemaining(challenge.ends_at))
+    const timer = setInterval(() => setRemaining(getRemaining(challenge.ends_at)), 1000)
+    return () => clearInterval(timer)
+  }, [challenge?.ends_at])
+
+  const handleJoin = async () => {
+    if (!challenge || !profile) return
+    setJoining(true)
+    const res = await joinChallenge(challenge.id)
+    setJoining(false)
+    if (res.error) return
+    await loadParticipation(challenge.id, profile.id)
+  }
+
+  const handlePlay = () => {
+    if (!challenge || !participation) return
+    onNavigateToGame('workgame', challenge.game_id ?? undefined, { type: 'challenge', refId: participation.id })
+  }
+
+  const periodLabel = PERIODS.find((p) => p.key === period)!
+
+  return (
+    <div className="screen bg-mesh">
+      <TopBar title="Challenges" titleAr="التحديات" lang={lang} setLang={setLang} onBack={onBack} />
+
+      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+        {/* Period tabs */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 12, padding: 4 }}>
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPeriod(p.key)}
+              style={{
+                flex: 1, padding: '9px 4px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                fontSize: 12.5, fontWeight: 700, transition: 'all 0.2s ease',
+                background: period === p.key ? 'linear-gradient(135deg, #7c3aed, #4f46e5)' : 'transparent',
+                color: period === p.key ? 'white' : 'rgba(var(--fg-rgb),0.45)',
+                fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
+              }}
+            >
+              {isAr ? p.ar : p.en}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div style={{ padding: '60px 20px', textAlign: 'center', color: 'rgba(var(--fg-rgb),0.4)', fontSize: 13 }}>
+            {isAr ? 'جارٍ التحميل...' : 'Loading...'}
+          </div>
+        ) : !challenge ? (
+          <div className="glass-card" style={{ padding: '48px 20px', textAlign: 'center' }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>🗓️</div>
+            <p style={{ margin: 0, fontSize: 14, color: 'rgba(var(--fg-rgb),0.5)' }}>
+              {isAr ? `لا يوجد تحدٍ ${periodLabel.ar} نشط حالياً` : `No active ${periodLabel.en.toLowerCase()} challenge right now`}
+            </p>
+          </div>
+        ) : (
+        <>
+        {/* Challenge Hero Card */}
+        <div
+          className="glass-card"
+          style={{
+            padding: '24px 20px',
+            background: 'linear-gradient(135deg, rgba(124,58,237,0.3) 0%, rgba(79,70,229,0.2) 50%, rgba(6,182,212,0.1) 100%)',
+            border: '1px solid rgba(124,58,237,0.35)',
+            marginBottom: 16,
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ position: 'absolute', top: -40, right: -40, width: 150, height: 150, background: 'radial-gradient(circle, rgba(124,58,237,0.3) 0%, transparent 70%)', borderRadius: '50%' }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span className="badge-live animate-pulse-glow">
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
+              LIVE
+            </span>
+            <span style={{ fontSize: 12, color: 'rgba(var(--fg-rgb),0.4)' }}>
+              {isAr ? periodLabel.ar : periodLabel.en}
+            </span>
+          </div>
+
+          <h2
+            className={isAr ? 'font-cairo' : 'font-display'}
+            style={{ margin: '0 0 6px', fontSize: 24, fontWeight: 800, color: 'var(--foreground)' }}
+          >
+            {isAr ? challenge.title_ar : challenge.title}
+          </h2>
+          <p style={{ margin: '0 0 20px', fontSize: 14, color: 'rgba(var(--fg-rgb),0.5)' }}>
+            {isAr ? `${challenge.question_count} سؤالاً · مكافآت حصرية` : `${challenge.question_count} Questions · Exclusive Rewards`}
+          </p>
+
+          {/* Countdown */}
+          <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+            {[
+              { val: pad2(remaining.days), label: isAr ? 'يوم' : 'Days' },
+              { val: pad2(remaining.hours), label: isAr ? 'ساعة' : 'Hours' },
+              { val: pad2(remaining.mins), label: isAr ? 'دقيقة' : 'Mins' },
+              { val: pad2(remaining.secs), label: isAr ? 'ثانية' : 'Secs' },
+            ].map((item) => (
+              <div
+                key={item.label}
+                style={{ flex: 1, background: 'rgba(0,0,0,0.3)', borderRadius: 12, padding: '10px 8px', textAlign: 'center', border: '1px solid rgba(var(--fg-rgb),0.08)' }}
+              >
+                <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 22, fontWeight: 800, color: '#a78bfa' }}>{item.val}</div>
+                <div style={{ fontSize: 10, color: 'rgba(var(--fg-rgb),0.35)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Prizes */}
+          {challenge.challenge_prizes.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+              {[...challenge.challenge_prizes]
+                .sort((a: Prize, b: Prize) => a.sort_order - b.sort_order)
+                .map((prize: Prize, i: number) => {
+                  const style = PRIZE_TILE_STYLES[i % PRIZE_TILE_STYLES.length]
+                  return (
+                    <div key={prize.id} style={{ flex: 1, background: style.color, border: `1px solid ${style.border}`, borderRadius: 12, padding: '10px 8px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 20, marginBottom: 3 }}>{style.icon}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(var(--fg-rgb),0.8)' }}>{isAr ? prize.rank_label_ar : prize.rank_label}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(var(--fg-rgb),0.4)', marginTop: 2 }}>{isAr ? prize.prize_ar : prize.prize}</div>
+                    </div>
+                  )
+                })}
+            </div>
+          )}
+
+          {/* CTA */}
+          {!participation ? (
+            <button
+              className="btn-primary"
+              style={{ width: '100%', fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit', opacity: joining ? 0.6 : 1 }}
+              onClick={handleJoin}
+              disabled={joining}
+            >
+              {isAr ? '⚡ انضم للتحدي الآن' : '⚡ Join Challenge Now'}
+            </button>
+          ) : (
+            <button
+              className="btn-primary"
+              style={{ width: '100%', background: 'linear-gradient(135deg, #059669, #10b981)', fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit' }}
+              onClick={handlePlay}
+            >
+              {isAr ? '▶ استمر في اللعب' : '▶ Continue Playing'}
+            </button>
+          )}
+        </div>
+
+        {/* Your progress */}
+        <div className="glass-card" style={{ padding: '18px 20px', marginBottom: 16 }}>
+          <h3 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 700, color: 'rgba(var(--fg-rgb),0.6)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {isAr ? 'تقدمك' : 'Your Progress'}
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            {[
+              { label: isAr ? 'ترتيبك' : 'Your Rank', value: (() => { const i = participants.findIndex((p) => p.user_id === profile?.id); return i >= 0 ? `#${i + 1}` : '—' })(), color: '#a78bfa' },
+              { label: isAr ? 'نقاطك' : 'Your Score', value: (participation?.score ?? 0).toLocaleString(), color: '#fbbf24' },
+              { label: isAr ? 'مكتمل' : 'Completed', value: `${participation?.questions_completed ?? 0}/${challenge.question_count}`, color: '#06b6d4' },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: 'center', background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 14, padding: '14px 8px' }}>
+                <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+                <div style={{ fontSize: 10, color: 'rgba(var(--fg-rgb),0.4)', marginTop: 2 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, color: 'rgba(var(--fg-rgb),0.4)' }}>{isAr ? 'التقدم العام' : 'Overall Progress'}</span>
+              <span style={{ fontSize: 12, color: '#a78bfa', fontWeight: 600 }}>
+                {participation && challenge.question_count ? Math.round((participation.questions_completed / challenge.question_count) * 100) : 0}%
+              </span>
+            </div>
+            <div className="xp-bar" style={{ height: 8 }}>
+              <div className="xp-bar-fill" style={{ ['--xp-pct' as string]: (participation && challenge.question_count ? participation.questions_completed / challenge.question_count : 0) } as CSSProperties} />
+            </div>
+          </div>
+        </div>
+
+        {/* Live Leaderboard */}
+        <div className="glass-card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid rgba(var(--fg-rgb),0.06)' }}>
+            <h3 className={isAr ? 'font-cairo' : 'font-display'} style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--foreground)' }}>
+              {isAr ? '🏆 المتصدرون المباشر' : '🏆 Live Rankings'}
+            </h3>
+          </div>
+          {participants.length === 0 ? (
+            <p style={{ margin: 0, padding: '24px 16px', textAlign: 'center', fontSize: 12.5, color: 'rgba(var(--fg-rgb),0.35)' }}>
+              {isAr ? 'كن أول من ينضم!' : 'Be the first to join!'}
+            </p>
+          ) : participants.map((p, i) => {
+            const rank = i + 1
+            const isMe = p.user_id === profile?.id
+            return (
+              <div
+                key={p.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+                  borderBottom: i < participants.length - 1 ? '1px solid rgba(var(--fg-rgb),0.05)' : 'none',
+                  background: isMe ? 'rgba(124,58,237,0.1)' : 'transparent',
+                }}
+              >
+                <div style={{
+                  width: 28, height: 28, borderRadius: '50%',
+                  background: rank <= 3
+                    ? ['linear-gradient(135deg, #fbbf24, #f59e0b)', 'linear-gradient(135deg, #d1d5db, #9ca3af)', 'linear-gradient(135deg, #cd7c32, #b45309)'][rank - 1]
+                    : 'rgba(var(--fg-rgb),0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 11, fontWeight: 800,
+                  color: rank <= 3 ? '#07071a' : 'rgba(var(--fg-rgb),0.5)',
+                  flexShrink: 0,
+                }}>
+                  {rank}
+                </div>
+                <Avatar url={p.profiles?.avatar_url} size={28} />
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 14, fontWeight: isMe ? 700 : 600, color: isMe ? '#a78bfa' : 'var(--foreground)' }}>
+                    {p.profiles?.username ? `@${p.profiles.username}` : (isAr ? 'لاعب' : 'Player')}
+                  </span>
+                </div>
+                <span style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 16, fontWeight: 700, color: '#fbbf24' }}>
+                  {p.score.toLocaleString()}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+        </>
+        )}
+      </div>
+    </div>
+  )
+}
