@@ -11,6 +11,7 @@ import MatchLobby from '../components/match/MatchLobby'
 import MatchResults from '../components/match/MatchResults'
 import Avatar from '../components/Avatar'
 import { sound } from '../lib/sound'
+import { diagLog } from '../lib/diagnostics'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -39,6 +40,8 @@ export default function EmojiDecodeScreen({ onNavigate, lang }: Props) {
   const [lockedOut, setLockedOut] = useState(false)
   const [lastPoints, setLastPoints] = useState<number | null>(null)
   const [results, setResults] = useState<{ room: MatchRoom | null; rows: MatchResultRow[]; coinDelta: number } | null>(null)
+  const [readyBusy, setReadyBusy] = useState(false)
+  const [readyError, setReadyError] = useState<string | null>(null)
   const lastRoundIdRef = useRef<string | null>(null)
   const resultsFetchedRef = useRef(false)
 
@@ -52,7 +55,7 @@ export default function EmojiDecodeScreen({ onNavigate, lang }: Props) {
     return () => { cancelled = true }
   }, [])
 
-  const { room, players, round, reveal, phase, roundTimeLeftMs, roundTimePct } = useMatchEngine(roomId)
+  const { room, players, round, reveal, phase, roundTimeLeftMs, roundTimePct, refresh } = useMatchEngine(roomId)
 
   // Presence lifecycle fix: this used to only mark me "left" this room when
   // I tapped the explicit in-lobby leave button — never on unmount, so
@@ -133,6 +136,31 @@ export default function EmojiDecodeScreen({ onNavigate, lang }: Props) {
     }
   }, [room, round, phase, isCorrect, lockedOut])
 
+  // Fix for "Ready taps do nothing / counts never change": the old onReady
+  // handler fired setRoomReady and forgot about it — it never awaited the
+  // RPC result, never checked for an error, and never explicitly refetched
+  // players/room afterward, relying entirely on realtime (which was silently
+  // never firing — see migration 20260718090000 for the root cause). Now we
+  // await the RPC, surface any error visibly instead of swallowing it, and
+  // force an immediate refresh() so this device's own tap reflects instantly
+  // even before/without a realtime event arriving.
+  const handleReady = useCallback(async (ready: boolean) => {
+    if (!room) return
+    setReadyBusy(true)
+    setReadyError(null)
+    diagLog('match-room-ready', 'tap', { roomId: room.id, ready })
+    const result = await setRoomReady(room.id, ready)
+    setReadyBusy(false)
+    if (!result) {
+      const msg = isAr ? 'تعذر تحديث حالة الاستعداد. حاول مرة أخرى.' : 'Could not update ready status. Please try again.'
+      setReadyError(msg)
+      diagLog('match-room-ready', 'FAILED (see match-room scope for RPC error)', { roomId: room.id, ready })
+      return
+    }
+    diagLog('match-room-ready', 'ok, forcing refresh', { roomId: room.id, ready, result })
+    await refresh()
+  }, [room, isAr, refresh])
+
   const handleLeave = useCallback(() => {
     if (room) leaveRoom(room.id)
     onNavigate('games')
@@ -168,7 +196,9 @@ export default function EmojiDecodeScreen({ onNavigate, lang }: Props) {
     return (
       <MatchLobby
         room={room} players={players} myUserId={myUserId} lang={lang} accentColor={accent} nameEn={nameEn} nameAr={nameAr}
-        onReady={(ready) => setRoomReady(room.id, ready)}
+        onReady={handleReady}
+        busy={readyBusy}
+        error={readyError}
         onLeave={handleLeave}
       />
     )

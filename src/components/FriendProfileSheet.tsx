@@ -14,6 +14,7 @@ import {
   type FriendPresence,
 } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import { formatPresence } from '../lib/presenceFormat'
 
 interface Props {
   userId: string
@@ -110,9 +111,7 @@ export default function FriendProfileSheet({ userId, lang, onClose, isFriend, on
               <div style={{ fontSize: 12, color: presence?.is_in_game ? '#fbbf24' : presence?.is_online ? '#10b981' : 'rgba(var(--fg-rgb),0.35)', marginTop: 2 }}>
                 {presence?.is_in_game
                   ? (isAr ? `يلعب الآن: ${presence.game_name_ar ?? presence.game_name}` : `Playing ${presence.game_name}`)
-                  : presence?.is_online
-                    ? (isAr ? 'متصل الآن' : 'Online now')
-                    : (isAr ? 'غير متصل' : 'Offline')}
+                  : formatPresence(!!presence?.is_online, presence?.last_seen_at, isAr)}
               </div>
               {blockStatus.blockedByMe && (
                 <div style={{ fontSize: 11, color: '#ff4785', marginTop: 4, fontWeight: 600 }}>{isAr ? 'لقد حظرت هذا المستخدم' : "You've blocked this user"}</div>

@@ -14,11 +14,17 @@ interface Props {
   nameAr: string
   onReady: (ready: boolean) => void
   onLeave: () => void
+  /** Optional server-confirmed busy/error state from the parent's ready mutation
+   *  (which awaits the RPC and calls refresh()). Falls back to a local timed
+   *  debounce if the parent doesn't pass these, so this stays backward compatible. */
+  busy?: boolean
+  error?: string | null
 }
 
-export default function MatchLobby({ room, players, myUserId, lang, accentColor, nameEn, nameAr, onReady, onLeave }: Props) {
+export default function MatchLobby({ room, players, myUserId, lang, accentColor, nameEn, nameAr, onReady, onLeave, busy, error }: Props) {
   const isAr = lang === 'ar'
-  const [readying, setReadying] = useState(false)
+  const [readyingLocal, setReadyingLocal] = useState(false)
+  const readying = busy ?? readyingLocal
   const me = players.find((p) => p.user_id === myUserId)
   const iAmReady = me?.is_ready ?? false
   const readyCount = players.filter((p) => p.is_ready).length
@@ -26,9 +32,11 @@ export default function MatchLobby({ room, players, myUserId, lang, accentColor,
   const [copied, setCopied] = useState(false)
 
   const handleReady = () => {
-    setReadying(true)
+    if (busy === undefined) {
+      setReadyingLocal(true)
+      setTimeout(() => setReadyingLocal(false), 400)
+    }
     onReady(!iAmReady)
-    setTimeout(() => setReadying(false), 400)
   }
 
   const copyCode = () => {
@@ -130,6 +138,12 @@ export default function MatchLobby({ room, players, myUserId, lang, accentColor,
               ? (isAr ? '✓ أنت جاهز! اضغط للإلغاء' : "✓ You're ready! Tap to cancel")
               : (isAr ? 'أنا جاهز!' : "I'm Ready!")}
         </button>
+
+        {error && (
+          <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 12, background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontSize: 12.5, fontWeight: 600 }}>
+            {error}
+          </div>
+        )}
       </div>
     </div>
   )

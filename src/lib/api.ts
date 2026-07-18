@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient'
 import type { Tables } from './database.types'
+import { diagLog } from './diagnostics'
 
 // =============================================================================
 // KASTRO data access layer. Every mutation with anti-cheat or economy
@@ -1185,21 +1186,25 @@ export async function startSoloPractice(gameId: string) {
 /** Creates a private room with a shareable join code. Returns null on failure. */
 export async function createPrivateRoom(gameId: string, maxPlayers = 8) {
   const { data, error } = await supabase.rpc('create_private_room', { p_game_id: gameId, p_max_players: maxPlayers })
-  if (error) { logErr('createPrivateRoom', error); return null }
+  if (error) { logErr('createPrivateRoom', error); diagLog('match-room', 'create_private_room FAILED', { gameId, error: error.message, code: error.code }); return null }
   const row = (data as any[] | null)?.[0] as { room_id: string; join_code: string } | undefined
+  diagLog('match-room', 'create_private_room ok', { gameId, roomId: row?.room_id, joinCode: row?.join_code })
   return row ?? null
 }
 
 export async function joinRoomByCode(joinCode: string) {
+  diagLog('match-room', 'join_room_by_code →', { joinCode })
   const { data, error } = await supabase.rpc('join_room_by_code', { p_join_code: joinCode })
-  if (error) return { error: error.message, roomId: null }
+  if (error) { diagLog('match-room', 'join_room_by_code FAILED', { joinCode, error: error.message, code: error.code }); return { error: error.message, roomId: null } }
+  diagLog('match-room', 'join_room_by_code ok', { joinCode, roomId: data })
   return { error: null, roomId: data as string }
 }
 
 /** Finds (or opens) an open matchmaking room for this game/capacity. */
 export async function joinMatchmaking(gameId: string, maxPlayers = 8) {
   const { data, error } = await supabase.rpc('join_matchmaking', { p_game_id: gameId, p_max_players: maxPlayers })
-  if (error) { logErr('joinMatchmaking', error); return null }
+  if (error) { logErr('joinMatchmaking', error); diagLog('match-room', 'join_matchmaking FAILED', { gameId, error: error.message }); return null }
+  diagLog('match-room', 'join_matchmaking ok', { gameId, roomId: data })
   return data as string // room id
 }
 
@@ -1219,9 +1224,12 @@ export async function clearMyGamePresence() {
 
 /** Marks the caller ready; once every player in the room is ready, the room starts and round 1 is generated server-side. */
 export async function setRoomReady(roomId: string, ready: boolean) {
+  diagLog('match-room', 'set_room_ready →', { roomId, ready })
   const { data, error } = await supabase.rpc('set_room_ready', { p_room_id: roomId, p_ready: ready })
-  if (error) { logErr('setRoomReady', error); return null }
-  return ((data as any[] | null)?.[0] as { all_ready: boolean; started: boolean } | undefined) ?? null
+  if (error) { logErr('setRoomReady', error); diagLog('match-room', 'set_room_ready FAILED', { roomId, ready, error: error.message, code: error.code }); return null }
+  const row = ((data as any[] | null)?.[0] as { all_ready: boolean; started: boolean } | undefined) ?? null
+  diagLog('match-room', 'set_room_ready ok', { roomId, ready, result: row })
+  return row
 }
 
 export async function getMatchRoom(roomId: string): Promise<MatchRoom | null> {
@@ -1232,7 +1240,11 @@ export async function getMatchRoom(roomId: string): Promise<MatchRoom | null> {
 
 export async function getRoomPlayers(roomId: string) {
   const { data, error } = await supabase.from('match_room_players').select('*').eq('room_id', roomId).is('left_at', null)
-  if (error) { logErr('getRoomPlayers', error); return [] }
+  if (error) { logErr('getRoomPlayers', error); diagLog('match-room', 'getRoomPlayers FAILED', { roomId, error: error.message, code: error.code }); return [] }
+  diagLog('match-room', 'getRoomPlayers ok', {
+    roomId, playerCount: data.length, readyCount: data.filter((p) => p.is_ready).length,
+    playerRowIds: data.map((p) => p.id), userIds: data.map((p) => p.user_id),
+  })
   if (!data.length) return []
   const { data: profiles } = await supabase.rpc('get_public_profiles', { p_ids: data.map((p) => p.user_id) })
   const map = new Map((profiles as PublicProfile[] | null ?? []).map((p) => [p.id, p]))
@@ -1274,13 +1286,25 @@ export async function getRoundReveal(roundId: string) {
 
 /** Live-updates the room/round/players the instant anything changes — new rounds appearing, players joining/leaving, ready-state flips, room status transitions. */
 export function subscribeToRoom(roomId: string, onChange: () => void) {
+  diagLog('match-room-realtime', 'subscribing', { roomId })
   const channel = supabase
     .channel(`room:${roomId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_room_players', filter: `room_id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rounds', filter: `room_id=eq.${roomId}` }, onChange)
-    .subscribe()
-  return () => supabase.removeChannel(channel)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `id=eq.${roomId}` }, (payload) => {
+      diagLog('match-room-realtime', 'match_rooms change', { roomId, eventType: payload.eventType })
+      onChange()
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_room_players', filter: `room_id=eq.${roomId}` }, (payload) => {
+      diagLog('match-room-realtime', 'match_room_players change', { roomId, eventType: payload.eventType })
+      onChange()
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rounds', filter: `room_id=eq.${roomId}` }, (payload) => {
+      diagLog('match-room-realtime', 'match_rounds change', { roomId, eventType: payload.eventType })
+      onChange()
+    })
+    .subscribe((status, err) => {
+      diagLog('match-room-realtime', `channel status: ${status}`, { roomId, error: err ? String(err) : undefined })
+    })
+  return () => { diagLog('match-room-realtime', 'unsubscribing', { roomId }); supabase.removeChannel(channel) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,8 +1429,10 @@ export async function createBoardGameRoom(
 /** Joins an open seat, or reconnects to the caller's existing seat if they were already in it (works even mid-game). */
 export async function joinBoardGameRoom(roomId: string) {
   const { data, error } = await supabase.rpc('join_board_game_room', { p_room_id: roomId })
-  if (error) return { error: error.message, player: null }
-  return { error: null, player: ((Array.isArray(data) ? data[0] : data) as BoardGamePlayer | undefined) ?? null }
+  if (error) { diagLog('board-game-room', 'join_board_game_room FAILED', { roomId, error: error.message, code: error.code }); return { error: error.message, player: null } }
+  const player = ((Array.isArray(data) ? data[0] : data) as BoardGamePlayer | undefined) ?? null
+  diagLog('board-game-room', 'join_board_game_room ok', { roomId, playerId: player?.id })
+  return { error: null, player }
 }
 
 /** Joins a private room by its shareable invite code. */
@@ -1417,7 +1443,10 @@ export async function joinBoardGameRoomByCode(joinCode: string) {
 }
 
 export async function setBoardGameReady(roomId: string, ready: boolean) {
+  diagLog('board-game-room', 'set_board_game_ready →', { roomId, ready })
   const { error } = await supabase.rpc('set_board_game_ready', { p_room_id: roomId, p_ready: ready })
+  if (error) diagLog('board-game-room', 'set_board_game_ready FAILED', { roomId, ready, error: error.message, code: error.code })
+  else diagLog('board-game-room', 'set_board_game_ready ok', { roomId, ready })
   return { error: error?.message ?? null }
 }
 
@@ -1679,15 +1708,22 @@ export async function getBoardGameMatchDetail(roomId: string): Promise<BoardGame
 
 /** Live-updates everything about a room the instant it changes — players joining/leaving/reconnecting, ready-state, room status, state/version bumps, new moves, spectator count. */
 export function subscribeToBoardGameRoom(roomId: string, onChange: () => void) {
+  diagLog('board-game-realtime', 'subscribing', { roomId })
+  const wrap = (table: string) => (payload: { eventType: string }) => {
+    diagLog('board-game-realtime', `${table} change`, { roomId, eventType: payload.eventType })
+    onChange()
+  }
   const channel = supabase
     .channel(`board-game-room:${roomId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_rooms', filter: `id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_players', filter: `room_id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_state', filter: `room_id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_moves', filter: `room_id=eq.${roomId}` }, onChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_spectators', filter: `room_id=eq.${roomId}` }, onChange)
-    .subscribe()
-  return () => supabase.removeChannel(channel)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_rooms', filter: `id=eq.${roomId}` }, wrap('board_game_rooms'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_players', filter: `room_id=eq.${roomId}` }, wrap('board_game_players'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_state', filter: `room_id=eq.${roomId}` }, wrap('board_game_state'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_moves', filter: `room_id=eq.${roomId}` }, wrap('board_game_moves'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_spectators', filter: `room_id=eq.${roomId}` }, wrap('board_game_spectators'))
+    .subscribe((status, err) => {
+      diagLog('board-game-realtime', `channel status: ${status}`, { roomId, error: err ? String(err) : undefined })
+    })
+  return () => { diagLog('board-game-realtime', 'unsubscribing', { roomId }); supabase.removeChannel(channel) }
 }
 
 // ---------------------------------------------------------------------

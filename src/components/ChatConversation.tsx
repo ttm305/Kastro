@@ -17,6 +17,7 @@ import {
   type ChatMessage,
 } from '../lib/api'
 import { activeConversation, setActiveConversation } from '../lib/chatPresence'
+import { formatPresence } from '../lib/presenceFormat'
 
 function timeShort(iso: string): string {
   const d = new Date(iso)
@@ -87,6 +88,7 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
   const [sendError, setSendError] = useState<string | null>(null)
   const [otherTyping, setOtherTyping] = useState(false)
   const [otherOnline, setOtherOnline] = useState(false)
+  const [otherLastSeenAt, setOtherLastSeenAt] = useState<string | null>(null)
   const [otherInGame, setOtherInGame] = useState<{ name: string; nameAr: string } | null>(null)
   const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null)
   const [savePending, setSavePending] = useState(false)
@@ -173,10 +175,16 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
       const [p] = await getPresence([otherUser.id])
       if (!cancelled && p) {
         setOtherOnline(p.is_online)
+        setOtherLastSeenAt(p.last_seen_at)
         setOtherInGame(p.is_in_game ? { name: p.game_name ?? 'a game', nameAr: p.game_name_ar ?? 'لعبة' } : null)
       }
     }
     poll()
+    // 15s poll matched to the presence heartbeat's own 20s interval (see
+    // src/lib/presenceHeartbeat.ts) plus the 45s server-side freshness
+    // window in get_presence() — frequent enough that "just went offline"
+    // shows up within about one poll cycle, not tied to any Realtime
+    // subscription that could silently stop firing.
     const id = window.setInterval(poll, 15000)
     return () => { cancelled = true; window.clearInterval(id) }
   }, [otherUser.id])
@@ -385,9 +393,7 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
               ? (isAr ? 'يكتب الآن…' : 'typing…')
               : otherInGame
                 ? (isAr ? `يلعب الآن: ${otherInGame.nameAr}` : `Playing ${otherInGame.name}`)
-                : otherOnline
-                  ? (isAr ? 'متصل الآن' : 'Online')
-                  : (isAr ? 'غير متصل' : 'Offline')}
+                : formatPresence(otherOnline, otherLastSeenAt, isAr)}
           </p>
         </div>
       </div>

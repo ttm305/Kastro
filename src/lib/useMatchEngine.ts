@@ -52,7 +52,30 @@ export function useMatchEngine(roomId: string | null) {
   useEffect(() => {
     if (!roomId) return
     const unsub = subscribeToRoom(roomId, refresh)
-    return () => { unsub() }
+
+    // Defense-in-depth, mirroring the same fix already proven necessary for
+    // the board-game (Ludo) lobby controller (see lobbyController.ts): even
+    // with the realtime publication gap fixed (migration 20260718090000),
+    // iOS/Safari PWAs can suspend a realtime socket across a background→
+    // foreground cycle without ever firing a client-visible "closed" event,
+    // silently leaving a screen frozen on stale data. A direct refetch on
+    // foreground/online, plus a short-lived poll fallback while this hook is
+    // mounted, makes room/player/round state self-heal regardless of
+    // realtime socket health — cheap (three small selects) and bounded to
+    // only while a match screen is actually open.
+    const onForeground = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onForeground)
+    window.addEventListener('online', onForeground)
+    window.addEventListener('focus', onForeground)
+    const pollId = window.setInterval(refresh, 4000)
+
+    return () => {
+      unsub()
+      document.removeEventListener('visibilitychange', onForeground)
+      window.removeEventListener('online', onForeground)
+      window.removeEventListener('focus', onForeground)
+      window.clearInterval(pollId)
+    }
   }, [roomId, refresh])
 
   // Local ticking clock — drives every timer bar / phase transition without polling the server.

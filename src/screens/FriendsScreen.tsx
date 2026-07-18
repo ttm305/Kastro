@@ -25,6 +25,7 @@ import {
   type FriendPresence,
 } from '../lib/api'
 import FriendProfileSheet from '../components/FriendProfileSheet'
+import { formatPresence } from '../lib/presenceFormat'
 
 interface Props {
   // Friends is a top-level nav tab (like Games/Leaderboard) so it has no
@@ -360,8 +361,11 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
                       <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 700, color: 'var(--foreground)' }}>@{f.username}</p>
                       <p style={{ margin: '0 0 3px', fontSize: 11, color: 'rgba(var(--fg-rgb),0.35)' }}>{isAr ? `مستوى ${f.level}` : `Lv. ${f.level}`}</p>
                       {pres?.is_in_game && <span style={{ fontSize: 11, color: '#fbbf24' }}>🎮 {isAr ? `يلعب: ${pres.game_name_ar ?? pres.game_name}` : `Playing ${pres.game_name}`}</span>}
-                      {!pres?.is_in_game && pres?.is_online && <span style={{ fontSize: 11, color: '#10b981' }}>{isAr ? 'متصل' : 'Online'}</span>}
-                      {!pres?.is_in_game && !pres?.is_online && <span style={{ fontSize: 11, color: 'rgba(var(--fg-rgb),0.3)' }}>{isAr ? 'غير متصل' : 'Offline'}</span>}
+                      {!pres?.is_in_game && (
+                        <span style={{ fontSize: 11, color: pres?.is_online ? '#10b981' : 'rgba(var(--fg-rgb),0.35)' }}>
+                          {formatPresence(!!pres?.is_online, pres?.last_seen_at, isAr)}
+                        </span>
+                      )}
                     </div>
                     <button
                       onClick={() => handleOpenChatWith({ id: f.id, username: f.username, avatar_url: f.avatar_url })}

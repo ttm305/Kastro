@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import type { Session } from '@supabase/supabase-js'
 import { supabase, EDGE_FUNCTION_URL } from './supabaseClient'
 import type { Tables } from './database.types'
+import { diagLog } from './diagnostics'
 
 export type Profile = Tables<'profiles'>
 
@@ -81,12 +82,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loadProfile])
 
-  // Presence: mark online whenever a session starts. There is no reliable
-  // client-side "tab closed" signal, so `is_online` naturally clears on the
-  // next explicit sign-out; a scheduled job could additionally flip stale
-  // sessions offline server-side if exact presence becomes important.
+  // record_login is a one-shot "I just signed in" marker only — it does NOT
+  // drive the Online/Offline indicator anymore. That used to be the whole
+  // presence mechanism (mark online at login, only clear on explicit sign
+  // out), which is exactly why users stayed "Online" forever after closing
+  // the app. Real, live presence is now driven entirely by the heartbeat in
+  // presenceHeartbeat.ts (started from App.tsx) plus get_presence()'s
+  // server-side staleness check (last_seen_at > now() - 45s) — see migration
+  // 20260718080000_fix_live_presence.sql. This effect is kept only for
+  // whatever `record_login` itself is relied on for elsewhere (e.g. login
+  // streak/analytics), and to log the authenticated user id for diagnostics.
   useEffect(() => {
     if (!session) return
+    diagLog('auth', 'session established', { userId: session.user.id })
     supabase.rpc('record_login').then(() => loadProfile(session.user.id))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.user.id])

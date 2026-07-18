@@ -27,6 +27,8 @@ import QuietErrorBoundary from './components/QuietErrorBoundary'
 import { AuthProvider, useAuth } from './lib/auth'
 import { getMyConversations, subscribeToMyConversations } from './lib/api'
 import { isNativePlatform, listenForNotificationTaps } from './lib/nativePush'
+import { startPresenceHeartbeat } from './lib/presenceHeartbeat'
+import DiagnosticsPanel from './components/DiagnosticsPanel'
 
 export type Screen =
   | 'login'
@@ -95,6 +97,18 @@ function AppShell() {
     const id = window.setInterval(refresh, 30000)
     return () => { cancelled = true; unsub(); window.clearInterval(id) }
   }, [session, profile])
+
+  // Live presence heartbeat — see src/lib/presenceHeartbeat.ts for the full
+  // lifecycle (visibilitychange/pagehide/beforeunload/online/offline). This
+  // is the actual fix for accounts staying "Online" after closing the app:
+  // touch_presence()/mark_offline() existed as RPCs but had no caller
+  // anywhere in the app before this. Scoped to a real session only — starts
+  // the moment a session exists, tears down completely on sign-out so a
+  // logged-out tab never keeps heartbeating.
+  useEffect(() => {
+    if (!session) return
+    return startPresenceHeartbeat()
+  }, [session?.user.id])
 
   // Shared by every push-notification delivery path (Web Push service
   // worker message, Web Push URL param, and native FCM tap below) — all
@@ -314,6 +328,12 @@ function AppShell() {
       {screen === 'ludopacing' && <LudoPacingSlice onNavigate={safeNavigate} lang={lang} />}
 
       {showNav && <BottomNav current={screen} onNavigate={safeNavigate} lang={lang} unreadChatCount={unreadChatCount} />}
+      {/* TEMPORARY, owner-only — see src/components/DiagnosticsPanel.tsx. Lets
+          the owner capture live room/presence/realtime state from their own
+          device while testing the presence + multiplayer-lobby fixes,
+          without needing devtools attached to a phone. Renders nothing at
+          all for non-owner accounts. */}
+      {userRole === 'owner' && <DiagnosticsPanel lang={lang} />}
       {/* Both hosts are non-essential realtime UI (celebratory overlays,
           the message toast) — wrapped individually in QuietErrorBoundary
           so a bug in either can never blank the entire app; the rest of
