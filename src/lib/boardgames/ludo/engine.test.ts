@@ -317,6 +317,75 @@ describe('15. Arabic/RTL mode does not mirror the board', () => {
   })
 })
 
+describe('round 3 audit: a seat finishing in a 3-4 player match rotates the turn correctly', () => {
+  // Found during the round-3 "full turn-flow audit" and fixed in the same
+  // pass (both here and in the matching Postgres function
+  // private.ludo_apply_piece_move — see migration
+  // 20260721050000_ludo_finish_seat_rotation_deadlock_fix.sql). Root cause:
+  // nextActiveSeat(state, from) locates `from` in state.activeSeatIndices
+  // and returns whoever comes after it; when a piece move finishes a seat's
+  // last piece, that seat is filtered OUT of activeSeatIndices BEFORE the
+  // next-turn lookup ran, so the lookup couldn't find `from` and rotation
+  // broke (returned the wrong seat instead of correctly continuing past the
+  // just-finished one). Unreachable in a 2-player match — dropping to one
+  // active seat ends the game before next-turn is ever computed — which is
+  // exactly why two-account testing never surfaced it; this project's Ludo
+  // rooms do support 3-4 seated players, so it's a real production deadlock
+  // path. Fixed by rotating against the PRE-removal active list.
+  test('seat 0 finishing its last piece (3-seat game) hands the turn to seat 1, not stuck on 0', () => {
+    const state = makeState({
+      numSeats: 3,
+      turnSeatIndex: 0,
+      diceValue: 6,
+      activeSeatIndices: [0, 1, 2],
+      pieces: [
+        { seatIndex: 0, pieceIndex: 0, pathPos: LUDO_FINISHED },
+        { seatIndex: 0, pieceIndex: 1, pathPos: LUDO_FINISHED },
+        { seatIndex: 0, pieceIndex: 2, pathPos: LUDO_FINISHED },
+        { seatIndex: 0, pieceIndex: 3, pathPos: LUDO_FINISHED - 6 },
+        { seatIndex: 1, pieceIndex: 0, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 1, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 2, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 3, pathPos: -1 },
+        { seatIndex: 2, pieceIndex: 0, pathPos: -1 },
+        { seatIndex: 2, pieceIndex: 1, pathPos: -1 },
+        { seatIndex: 2, pieceIndex: 2, pathPos: -1 },
+        { seatIndex: 2, pieceIndex: 3, pathPos: -1 },
+      ],
+    })
+    const { state: next } = LudoEngine.applyMove(state, 0, { type: 'move', pieceId: '0:3' })
+    expect(next.activeSeatIndices).toEqual([1, 2])
+    expect(next.finishedOrder).toEqual([0])
+    expect(next.gameOver).toBe(false)
+    expect(next.turnSeatIndex).toBe(1) // NOT 0 — this is the exact case that used to deadlock
+  })
+
+  test('the last seat (seat 2) finishing wraps rotation correctly back to seat 0', () => {
+    const state = makeState({
+      numSeats: 3,
+      turnSeatIndex: 2,
+      diceValue: 6,
+      activeSeatIndices: [0, 1, 2],
+      pieces: [
+        { seatIndex: 0, pieceIndex: 0, pathPos: -1 },
+        { seatIndex: 0, pieceIndex: 1, pathPos: -1 },
+        { seatIndex: 0, pieceIndex: 2, pathPos: -1 },
+        { seatIndex: 0, pieceIndex: 3, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 0, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 1, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 2, pathPos: -1 },
+        { seatIndex: 1, pieceIndex: 3, pathPos: -1 },
+        { seatIndex: 2, pieceIndex: 0, pathPos: LUDO_FINISHED },
+        { seatIndex: 2, pieceIndex: 1, pathPos: LUDO_FINISHED },
+        { seatIndex: 2, pieceIndex: 2, pathPos: LUDO_FINISHED },
+        { seatIndex: 2, pieceIndex: 3, pathPos: LUDO_FINISHED - 6 },
+      ],
+    })
+    const { state: next } = LudoEngine.applyMove(state, 2, { type: 'move', pieceId: '2:3' })
+    expect(next.turnSeatIndex).toBe(0)
+  })
+})
+
 describe.skip('16–20: server-authoritative multiplayer properties (verified live this session, not re-run here)', () => {
   test('16. refresh/reconnect restores the same turn and state — join_board_game_room_internal restores an existing seat unconditionally, and board_game_state is the single source of truth clients refetch', () => {})
   test('17. a duplicate/replayed move request is rejected — ludo_submit_move raises errcode 40001 ("Stale state") when p_expected_version no longer matches; verified live by resubmitting an already-applied version', () => {})

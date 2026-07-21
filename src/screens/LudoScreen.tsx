@@ -144,8 +144,29 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
       minHeight: '100dvh', paddingBottom: 'calc(24px + env(safe-area-inset-bottom, 0px))',
       background: 'radial-gradient(ellipse 120% 60% at 50% -10%, rgba(124,58,237,0.16), transparent 55%), var(--background)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '18px 16px 10px' }}>
-        <button onClick={goBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--foreground)', display: 'flex', padding: 6 }}>
+      {/* iOS Safari/WKWebView draws the status bar/notch over anything at the
+          very top of the viewport unless it's pushed down — env(safe-area-inset-top)
+          is 0 on non-notched devices/browsers, so max(18px, ...) is a no-op
+          there and only kicks in where it's actually needed. Matches the
+          same pattern already used by TopBar.tsx. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '18px 16px 10px', paddingTop: 'max(18px, env(safe-area-inset-top, 0px))',
+      }}>
+        {/* 44x44 is the platform-standard minimum comfortable tap target
+            (Apple HIG / Material both specify it) — the icon stays visually
+            small, but the actual clickable button area is padded out to
+            meet it so the back button is reliably tappable next to the
+            status bar/notch instead of needing pixel-precision. */}
+        <button
+          onClick={goBack}
+          aria-label={isAr ? 'رجوع' : 'Back'}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', color: 'var(--foreground)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 44, height: 44, margin: '-12px 0', flexShrink: 0,
+          }}
+        >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points={isAr ? '9,18 15,12 9,6' : '15,18 9,12 15,6'} />
           </svg>
@@ -647,13 +668,15 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
   onMatchStart: () => void
   onExit: () => void
 }) {
-  const { loading, room, players, spectatorCount, myPlayer, isHost, canStart, setReady, startMatch, leave } = useBoardGameLobby(roomId, userId)
+  const { loading, room, players, spectatorCount, myPlayer, isHost, canStart, setReady, startMatch, claimColor, leave } = useBoardGameLobby(roomId, userId)
   const [starting, setStarting] = useState(false)
   const [copied, setCopied] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [readyBusy, setReadyBusy] = useState(false)
   const [readyError, setReadyError] = useState<string | null>(null)
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [colorBusy, setColorBusy] = useState<number | null>(null)
+  const [colorError, setColorError] = useState<string | null>(null)
 
   // The instant the room flips to 'active' (any client can be the one to
   // detect it, not just the host — everyone's realtime subscription sees the
@@ -668,11 +691,15 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
     if (countdown === null) return
     if (countdown === 0) {
       ludoSound.matchStart()
-      const t = setTimeout(() => onMatchStart(), 500)
+      const t = setTimeout(() => onMatchStart(), 320)
       return () => clearTimeout(t)
     }
     ludoSound.countdownTick()
-    const t = setTimeout(() => setCountdown((c) => (c ?? 1) - 1), 700)
+    // Shortened from 700ms/tick (~2.6s total) to 420ms/tick (~1.6s total) —
+    // still a readable synchronized beat across both clients, just far
+    // less of a forced wait before the match everyone's already looking at
+    // actually starts.
+    const t = setTimeout(() => setCountdown((c) => (c ?? 1) - 1), 420)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countdown])
@@ -706,6 +733,25 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
     setTimeout(() => setCopied(false), 1500)
   }
 
+  // Instant, optimistic-feeling color pick: claim_ludo_color is atomic
+  // server-side (a race with another player claiming the same color a
+  // moment earlier comes back as a clean error, never a silent overwrite),
+  // and useBoardGameLobby refetches immediately on return so this client's
+  // own screen updates without waiting on the realtime echo. Re-clicking my
+  // own already-selected color is a no-op (nothing to claim).
+  const handlePickColor = async (color: number) => {
+    if (myPlayer?.seat_index === color) return
+    setColorBusy(color)
+    setColorError(null)
+    const { error } = await claimColor(color)
+    setColorBusy(null)
+    if (error) { setColorError(error); return }
+    ludoSound.ready()
+  }
+
+  const colorOwners = new Map<number, typeof players[number]>()
+  for (const p of players) if (p.seat_index !== null) colorOwners.set(p.seat_index, p)
+
   if (loading || !room) {
     return <div style={{ padding: 60, textAlign: 'center', color: 'rgba(var(--fg2-rgb),0.5)', fontSize: 13 }}>{isAr ? 'جارٍ التحميل...' : 'Loading…'}</div>
   }
@@ -726,24 +772,91 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
         </button>
       )}
 
+      <p style={{ fontSize: 11, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.45)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '10px 2px 8px' }}>
+        {isAr ? 'اختر لونك' : 'Choose Your Color'}
+      </p>
+      {/* Colors can only be claimed once — the first player to tap a swatch
+          reserves it immediately (no page reload, no confirm step) and it's
+          disabled for everyone else the instant that lands. Changing your
+          mind before the match starts releases your previous color right
+          away (see claim_ludo_color). Once the host starts the match,
+          room.status flips off 'waiting' and the server rejects any further
+          claim, so this grid effectively locks itself — no separate
+          "locked" flag needed client-side. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
+        {SEAT_COLORS.map((hex, i) => {
+          const owner = colorOwners.get(i)
+          const mine = owner?.user_id === userId
+          const takenByOther = !!owner && !mine
+          const busy = colorBusy === i
+          const label = isAr ? SEAT_LABELS_AR[i] : SEAT_LABELS_EN[i]
+          const ownerName = owner ? (owner.user_id === userId ? myName : owner.profile?.username ?? label) : null
+          return (
+            <button
+              key={i}
+              onClick={() => handlePickColor(i)}
+              disabled={takenByOther || busy || room.status !== 'waiting'}
+              style={{
+                position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+                padding: '12px 4px 10px', borderRadius: 16, border: mine ? `2px solid ${hex}` : '2px solid transparent',
+                background: mine ? `${hex}1c` : 'rgba(var(--fg-rgb),0.04)',
+                cursor: takenByOther || room.status !== 'waiting' ? 'not-allowed' : 'pointer',
+                opacity: takenByOther ? 0.45 : 1,
+                transform: mine ? 'scale(1.04)' : 'scale(1)',
+                transition: 'transform 200ms cubic-bezier(0.22,1,0.36,1), border-color 200ms, background 200ms, opacity 200ms',
+                boxShadow: mine ? `0 4px 16px ${hex}40` : 'none',
+              }}
+            >
+              <span style={{
+                width: 30, height: 30, borderRadius: '50%', background: hex, flexShrink: 0,
+                boxShadow: mine ? `0 0 0 3px ${hex}33` : 'none', transition: 'box-shadow 200ms',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {mine && <span style={{ color: '#fff', fontSize: 14, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                {busy && !mine && <span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)', borderTopColor: '#fff', animation: 'ludoSpin 700ms linear infinite' }} />}
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: mine ? hex : 'rgba(var(--fg2-rgb),0.55)' }}>{label}</span>
+              <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(var(--fg2-rgb),0.4)', minHeight: 11, textAlign: 'center', lineHeight: 1.2 }}>
+                {takenByOther ? ownerName : mine ? (isAr ? 'أنت' : 'You') : ''}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <style>{`@keyframes ludoSpin { to { transform: rotate(360deg); } }`}</style>
+      {colorError && (
+        <div style={{ padding: '9px 14px', borderRadius: 12, background: 'rgba(255,71,87,0.12)', border: '1px solid rgba(255,71,87,0.3)', color: '#ff4757', fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+          {colorError}
+        </div>
+      )}
+
       <p style={{ fontSize: 11, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.45)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '10px 2px' }}>
         {isAr ? `اللاعبون (${players.length}/${room.max_players})` : `Players (${players.length}/${room.max_players})`}
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-        {players.map((p) => (
-          <div key={p.id} className="card" style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${SEAT_COLORS[p.seat_index % SEAT_COLORS.length]}30` }}>
-            <div style={{ width: 12, height: 12, borderRadius: 4, background: SEAT_COLORS[p.seat_index % SEAT_COLORS.length], flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--foreground)' }}>
-                {p.user_id === userId ? myName : p.profile?.username ?? `${isAr ? 'لاعب' : 'Player'} ${p.seat_index + 1}`}
-                {room.host_id === p.user_id && <span style={{ marginInlineStart: 6, fontSize: 10, color: '#f9ca24' }}>★ {isAr ? 'المضيف' : 'Host'}</span>}
-              </p>
+        {players.map((p) => {
+          const hasColor = p.seat_index !== null
+          const color = hasColor ? SEAT_COLORS[p.seat_index as number] : 'rgba(var(--fg-rgb),0.2)'
+          return (
+            <div key={p.id} className="card" style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${hasColor ? `${color}30` : 'rgba(var(--fg-rgb),0.1)'}` }}>
+              {hasColor
+                ? <div style={{ width: 12, height: 12, borderRadius: 4, background: color, flexShrink: 0 }} />
+                : <div style={{ width: 12, height: 12, borderRadius: '50%', border: '1.5px dashed rgba(var(--fg2-rgb),0.35)', flexShrink: 0 }} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: 'var(--foreground)' }}>
+                  {p.user_id === userId ? myName : p.profile?.username ?? (isAr ? 'لاعب' : 'Player')}
+                  {room.host_id === p.user_id && <span style={{ marginInlineStart: 6, fontSize: 10, color: '#f9ca24' }}>★ {isAr ? 'المضيف' : 'Host'}</span>}
+                </p>
+                {!hasColor && (
+                  <p style={{ margin: '2px 0 0', fontSize: 10.5, color: 'rgba(var(--fg2-rgb),0.4)' }}>{isAr ? 'يختار لونًا...' : 'Choosing a color…'}</p>
+                )}
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: p.is_ready ? '#2ed573' : 'rgba(var(--fg2-rgb),0.4)' }}>
+                {p.is_ready ? (isAr ? 'جاهز' : 'Ready') : (isAr ? 'بالانتظار' : 'Waiting')}
+              </span>
             </div>
-            <span style={{ fontSize: 11, fontWeight: 700, color: p.is_ready ? '#2ed573' : 'rgba(var(--fg2-rgb),0.4)' }}>
-              {p.is_ready ? (isAr ? 'جاهز' : 'Ready') : (isAr ? 'بالانتظار' : 'Waiting')}
-            </span>
-          </div>
-        ))}
+          )
+        })}
         {Array.from({ length: Math.max(0, room.max_players - players.length) }, (_, i) => (
           <div key={`empty-${i}`} style={{ padding: '12px 14px', borderRadius: 14, border: '1px dashed rgba(var(--fg-rgb),0.12)', color: 'rgba(var(--fg2-rgb),0.35)', fontSize: 12, fontWeight: 600, textAlign: 'center' }}>
             {isAr ? 'مقعد فارغ' : 'Open seat'}
@@ -790,7 +903,9 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
         <p style={{ fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', textAlign: 'center', marginBottom: 10 }}>
           {players.length < room.min_players
             ? (isAr ? `بحاجة إلى ${room.min_players} لاعبين على الأقل` : `Need at least ${room.min_players} players`)
-            : (isAr ? 'بانتظار استعداد الجميع' : 'Waiting for everyone to be ready')}
+            : players.some((p) => p.seat_index === null)
+              ? (isAr ? 'بانتظار اختيار الجميع للألوان' : 'Waiting for everyone to choose a color')
+              : (isAr ? 'بانتظار استعداد الجميع' : 'Waiting for everyone to be ready')}
         </p>
       )}
       {!isHost && (
@@ -877,7 +992,7 @@ function LudoMatch({ seats, ais, isAr, onExit }: { seats: BoardGameSeat[]; ais: 
 function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; userId: string; isAr: boolean; onExit: () => void }) {
   const {
     loading, room, seats, state, currentSeatIndex, currentSeat, mySeatIndex, isMyTurn,
-    validMoves, events, result, spectatorCount, turnTimeLeftMs, submitMove, forfeit,
+    validMoves, events, result, spectatorCount, turnTimeLeftMs, submitMove, forfeit, actionError,
   } = useOnlineBoardGame({
     engine: LudoEngine, roomId, userId,
     // Ludo is server-authoritative: the client only ever sends an intent
@@ -914,6 +1029,20 @@ function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; use
     prevConnRef.current = new Map(seats.map((s) => [s.seatIndex, !!s.isConnected]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seats])
+
+  // A rejected roll/move (stale version, "already rolled," "not your turn,"
+  // etc.) used to fail completely silently — indistinguishable from a
+  // freeze. Now it surfaces as a toast and onlineController immediately
+  // resyncs from the server (see submitMove's refresh() call on error), so
+  // the player sees SOMETHING happened instead of nothing, and self-heals
+  // within a moment rather than sitting on stale local state.
+  useEffect(() => {
+    if (!actionError) return
+    const friendly = /stale state|version/i.test(actionError)
+      ? (isAr ? 'إعادة المزامنة...' : 'Syncing…')
+      : (isAr ? 'لم يتم قبول هذا الإجراء' : "That action wasn't accepted")
+    setToast({ text: friendly, kind: 'out' })
+  }, [actionError, isAr])
 
   useEffect(() => {
     if (!toast) return
@@ -1138,17 +1267,21 @@ function LudoBoard({
     if (last.type === 'diceRolled') {
       setRolling(true)
       let ticks = 0
+      // Shortened from 7 ticks @ 60ms (420ms) to 5 ticks @ 50ms (250ms) —
+      // the real dice value is already resolved server-side before this
+      // purely cosmetic tumble even starts, so a snappier reveal doesn't
+      // cost any correctness, it just feels faster.
       const iv = setInterval(() => {
         setDisplayDice(1 + Math.floor(Math.random() * 6))
         ludoSound.diceRattle()
         ticks++
-        if (ticks > 6) {
+        if (ticks > 4) {
           clearInterval(iv)
           setDisplayDice(last.value as number)
           setRolling(false)
           ludoSound.diceSettle(last.value as number)
         }
-      }, 60)
+      }, 50)
       return () => clearInterval(iv)
     }
     if (last.type === 'pieceMoved') {
@@ -1428,7 +1561,7 @@ function LudoBoard({
                 <circle
                   key={`glow-${piece.seatIndex}:${piece.pieceIndex}`}
                   cx={pos.x} cy={pos.y} r={16} fill={`url(#ludoPieceGrad-${piece.seatIndex})`}
-                  style={{ transition: 'cx 460ms cubic-bezier(0.22,1,0.36,1), cy 460ms cubic-bezier(0.22,1,0.36,1)' }}
+                  style={{ transition: 'cx 260ms cubic-bezier(0.22,1,0.36,1), cy 260ms cubic-bezier(0.22,1,0.36,1)' }}
                 />
               )
             })}
@@ -1472,14 +1605,18 @@ function LudoBoard({
               <g
                 key={pid}
                 transform={`translate(${pos.x + stackFan.x},${pos.y + stackFan.y})`}
-                style={{ transition: 'transform 460ms cubic-bezier(0.22,1,0.36,1)', cursor: movable ? 'pointer' : 'default' }}
+                // Shortened from 460ms — this is the transition users feel
+                // most directly as "piece movement," and nothing gates
+                // interaction on it finishing, so a snappier slide reads as
+                // more responsive without losing legibility.
+                style={{ transition: 'transform 260ms cubic-bezier(0.22,1,0.36,1)', cursor: movable ? 'pointer' : 'default' }}
                 onClick={() => movable && onMove({ type: 'move', pieceId: pid })}
               >
                 {movable && <circle r={16} fill="none" stroke={SEAT_COLORS[piece.seatIndex]} strokeWidth={2.5} opacity={0.9}>
                   <animate attributeName="r" values="14;18;14" dur="1s" repeatCount="indefinite" />
                   <animate attributeName="opacity" values="0.9;0.35;0.9" dur="1s" repeatCount="indefinite" />
                 </circle>}
-                <g style={justMoved ? { animation: 'ludoPieceLand 380ms cubic-bezier(0.34,1.56,0.64,1)' } : undefined}>
+                <g style={justMoved ? { animation: 'ludoPieceLand 240ms cubic-bezier(0.34,1.56,0.64,1)' } : undefined}>
                   <ellipse cx={0.5} cy={9} rx={9.5} ry={3.2} fill="rgba(0,0,0,0.32)" />
                   <circle r={11.5} fill={finished ? SEAT_COLORS_DARK[piece.seatIndex] : `url(#ludoPieceBody-${piece.seatIndex})`} stroke="#fff" strokeWidth={2} />
                   <circle r={11.5} fill="none" stroke="rgba(0,0,0,0.12)" strokeWidth={1} />
@@ -1611,7 +1748,7 @@ function PlayerCardsRail({
               boxShadow: active ? `0 0 0 1px ${color}30, 0 6px 18px ${color}35` : 'none',
               transform: active ? 'translateY(-2px) scale(1.04)' : 'translateY(0) scale(1)',
               opacity: s.hasLeft ? 0.4 : 1,
-              transition: 'all 340ms cubic-bezier(0.22,1,0.36,1)',
+              transition: 'all 220ms cubic-bezier(0.22,1,0.36,1)',
             }}
           >
             <div style={{ position: 'relative', width: 42, height: 42 }}>
@@ -1651,7 +1788,7 @@ function PlayerCardsRail({
       {/* Sliding indicator bar — the second, structurally-linked confirmation of whose turn it is; purely a transform driven by activeSeatIndex */}
       <div style={{
         position: 'absolute', bottom: 4, left: `${(activeSeatIndex / n) * 100}%`, width: `${100 / n}%`, height: 3, borderRadius: 3,
-        padding: '0 14px', pointerEvents: 'none', transition: 'left 380ms cubic-bezier(0.22,1,0.36,1)', opacity: isTurnLive ? 1 : 0.25,
+        padding: '0 14px', pointerEvents: 'none', transition: 'left 240ms cubic-bezier(0.22,1,0.36,1)', opacity: isTurnLive ? 1 : 0.25,
       }}>
         <div style={{ height: '100%', borderRadius: 3, background: `linear-gradient(90deg, ${SEAT_COLORS[activeSeatIndex]}, ${SEAT_COLORS_DARK[activeSeatIndex]})`, boxShadow: `0 0 8px ${SEAT_COLORS[activeSeatIndex]}90` }} />
       </div>
@@ -1724,7 +1861,7 @@ function Die({ value, rolling }: { value: number | null; rolling: boolean }) {
     if (wasRolling.current) {
       wasRolling.current = false
       setJustSettled(true)
-      const t = setTimeout(() => setJustSettled(false), 420)
+      const t = setTimeout(() => setJustSettled(false), 260)
       return () => clearTimeout(t)
     }
   }, [rolling])
@@ -1769,9 +1906,9 @@ function Die({ value, rolling }: { value: number | null; rolling: boolean }) {
         <div style={{ position: 'absolute', left: '50%', bottom: -6, width: 40, height: 10, borderRadius: '50%', background: 'radial-gradient(ellipse, rgba(0,0,0,0.4), transparent 70%)', transform: 'translateX(-50%)' }} />
         <div style={{
           width: 58, height: 58, position: 'relative',
-          animation: rolling ? 'ludoDieSpin2D 550ms linear infinite' : undefined,
+          animation: rolling ? 'ludoDieSpin2D 260ms linear infinite' : undefined,
           transform: !rolling ? (justSettled ? 'scale(1.14)' : 'scale(1)') : undefined,
-          transition: !rolling ? 'transform 380ms cubic-bezier(0.34,1.56,0.64,1)' : undefined,
+          transition: !rolling ? 'transform 220ms cubic-bezier(0.34,1.56,0.64,1)' : undefined,
           willChange: 'transform',
         }}>
           <div style={DIE_FACE_BASE}><DiePips value={value} /></div>
@@ -1791,11 +1928,11 @@ function Die({ value, rolling }: { value: number | null; rolling: boolean }) {
         transformStyle: 'preserve-3d', WebkitTransformStyle: 'preserve-3d',
         transformOrigin: 'center center',
         willChange: 'transform',
-        animation: rolling ? 'ludoDieTumble3D 620ms linear infinite' : undefined,
+        animation: rolling ? 'ludoDieTumble3D 280ms linear infinite' : undefined,
         transform: !rolling
           ? (justSettled ? 'rotateX(0deg) rotateY(0deg) scale(1.16)' : 'rotateX(0deg) rotateY(0deg) scale(1)')
           : undefined,
-        transition: !rolling ? 'transform 420ms cubic-bezier(0.34,1.56,0.64,1)' : undefined,
+        transition: !rolling ? 'transform 240ms cubic-bezier(0.34,1.56,0.64,1)' : undefined,
       } as React.CSSProperties}>
         {/* Front face — always shows the live rolled value, so the die "lands" on the right number with zero orientation math. */}
         <div style={{ ...DIE_FACE_BASE, transform: 'translateZ(29px)' } as React.CSSProperties}>
@@ -2053,8 +2190,8 @@ function LudoMatchDetailModal({ isAr, loading, detail, onClose, onWatchReplay }:
               {ranked.map((p) => (
                 <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 12, background: p.final_rank === 1 ? 'rgba(249,202,36,0.1)' : 'rgba(var(--fg-rgb),0.04)' }}>
                   <span style={{ fontSize: 13, fontWeight: 800, width: 22, color: p.final_rank === 1 ? '#f9ca24' : 'rgba(var(--fg2-rgb),0.5)' }}>#{p.final_rank ?? '—'}</span>
-                  <span style={{ width: 8, height: 8, borderRadius: 3, background: SEAT_COLORS[p.seat_index % SEAT_COLORS.length] }} />
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--foreground)' }}>{p.is_ai ? 'AI' : p.profile?.username ?? `${isAr ? 'لاعب' : 'Player'} ${p.seat_index + 1}`}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: 3, background: SEAT_COLORS[(p.seat_index ?? 0) % SEAT_COLORS.length] }} />
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--foreground)' }}>{p.is_ai ? 'AI' : p.profile?.username ?? `${isAr ? 'لاعب' : 'Player'} ${(p.seat_index ?? 0) + 1}`}</span>
                   <span style={{ fontSize: 11, color: 'rgba(var(--fg2-rgb),0.45)' }}>{p.final_score ?? 0} {isAr ? 'نقطة' : 'pts'}</span>
                 </div>
               ))}
@@ -2098,14 +2235,17 @@ function LudoReplayScreen({ isAr, roomId, onExit }: { isAr: boolean; roomId: str
 
   const seats: BoardGameSeat[] = useMemo(() => {
     if (!detail) return []
+    // A completed match's players always have a claimed (non-null) color —
+    // seat_index only goes null pre-match, in the lobby (round-3 color
+    // selection) — so the ?? 0 fallback below never actually triggers here.
     return [...detail.players]
-      .sort((a, b) => a.seat_index - b.seat_index)
+      .sort((a, b) => (a.seat_index ?? 0) - (b.seat_index ?? 0))
       .map((p) => ({
-        seatIndex: p.seat_index,
+        seatIndex: p.seat_index ?? 0,
         userId: p.user_id,
-        displayName: p.is_ai ? 'AI' : p.profile?.username ?? `${isAr ? 'لاعب' : 'Player'} ${p.seat_index + 1}`,
+        displayName: p.is_ai ? 'AI' : p.profile?.username ?? `${isAr ? 'لاعب' : 'Player'} ${(p.seat_index ?? 0) + 1}`,
         isAI: p.is_ai,
-        token: String(p.seat_index),
+        token: String(p.seat_index ?? 0),
       }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail])

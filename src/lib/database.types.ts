@@ -351,7 +351,7 @@ export type Database = {
           last_heartbeat_at: string
           left_at: string | null
           room_id: string
-          seat_index: number
+          seat_index: number | null
           user_id: string | null
         }
         Insert: {
@@ -370,7 +370,7 @@ export type Database = {
           last_heartbeat_at?: string
           left_at?: string | null
           room_id: string
-          seat_index: number
+          seat_index?: number | null
           user_id?: string | null
         }
         Update: {
@@ -389,7 +389,7 @@ export type Database = {
           last_heartbeat_at?: string
           left_at?: string | null
           room_id?: string
-          seat_index?: number
+          seat_index?: number | null
           user_id?: string | null
         }
         Relationships: [

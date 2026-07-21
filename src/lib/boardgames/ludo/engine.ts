@@ -110,24 +110,35 @@ export const LudoEngine: BoardGameEngine<LudoState, LudoMove> = {
   maxPlayers: 4,
 
   createInitialState(seats: BoardGameSeat[]): LudoState {
+    // Build pieces/activeSeatIndices from each seat's ACTUAL seatIndex
+    // value, not its position in the array. For local pass-and-play these
+    // are always identical (seats are auto-assigned 0..n-1 in order), so
+    // this is a no-op there. It matters for the online match replay viewer,
+    // which calls this with `seats` derived from the real (now possibly
+    // sparse — e.g. {0,3} if that's what both players picked as their
+    // colors) claimed seat_index values from board_game_players — using
+    // array position there would silently reconstruct the wrong seats for
+    // the pre-first-move replay frame. Same class of bug as the deadlock
+    // fix earlier this round; fixed the same way, by using the real index
+    // instead of a loop/array position.
     const numSeats = seats.length
     const pieces: LudoPiece[] = []
-    for (let s = 0; s < numSeats; s++) {
+    for (const seat of seats) {
       for (let p = 0; p < PIECES_PER_SEAT; p++) {
-        pieces.push({ seatIndex: s, pieceIndex: p, pathPos: -1 })
+        pieces.push({ seatIndex: seat.seatIndex, pieceIndex: p, pathPos: -1 })
       }
     }
     return {
       numSeats,
       pieces,
-      turnSeatIndex: 0,
+      turnSeatIndex: seats[0]?.seatIndex ?? 0,
       diceValue: null,
       consecutiveSixes: 0,
       finishedOrder: [],
-      activeSeatIndices: seats.map((_, i) => i),
+      activeSeatIndices: seats.map((s) => s.seatIndex),
       rngState: Date.now() & 0x7fffffff,
       gameOver: false,
-      piecesLostCount: Object.fromEntries(seats.map((_, i) => [i, 0])),
+      piecesLostCount: Object.fromEntries(seats.map((s) => [s.seatIndex, 0])),
     }
   },
 
@@ -278,11 +289,22 @@ export const LudoEngine: BoardGameEngine<LudoState, LudoMove> = {
     // on the board to capture.
     const captured = events.some((e) => e.type === 'pieceCaptured')
     const earnsExtraTurn = (rolledSix && state.consecutiveSixes < MAX_CONSECUTIVE_SIXES) || captured
+    // IMPORTANT: rotate using `state` (the ORIGINAL, unmutated activeSeatIndices),
+    // not the local `activeSeatIndices` var — that one may have already had
+    // `seatIndex` filtered out a few lines up if this move just finished the
+    // seat's last piece. nextActiveSeat() finds "the next seat after `from`"
+    // by looking up `from`'s position in the array; if `seatIndex` has
+    // already been removed, indexOf() can't find it and rotation breaks
+    // (in a 3-4 seat game this silently jumps to the wrong seat instead of
+    // correctly continuing the rotation — found during the round-3 turn-flow
+    // audit, matching the equivalent bug fixed in ludo_apply_piece_move on
+    // the server). The pre-move `state.activeSeatIndices` always still
+    // contains `seatIndex`, so lookups against it are always correct.
     const nextTurn = gameOver
       ? state.turnSeatIndex
       : earnsExtraTurn && activeSeatIndices.includes(seatIndex)
         ? seatIndex
-        : nextActiveSeat({ ...state, activeSeatIndices }, seatIndex)
+        : nextActiveSeat(state, seatIndex)
 
     return {
       state: {

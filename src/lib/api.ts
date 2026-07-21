@@ -1720,6 +1720,26 @@ export async function forfeitLudoMatch(roomId: string) {
   return { error: null, result: (data as unknown as LudoForfeitResult | null) ?? null }
 }
 
+/**
+ * Pre-match color selection (round 3). Ludo no longer auto-assigns a seat/
+ * color on join — every player must explicitly claim one of the 4 classic
+ * colors (0=Red, 1=Green, 2=Yellow, 3=Blue) before the host can start.
+ * Claiming is atomic and race-safe server-side (a partial unique index is
+ * the real source of truth); a conflict — someone else claimed it a moment
+ * earlier — comes back as a clean error, not a silent overwrite. Passing
+ * `color: null` releases the caller's current color without claiming a new
+ * one. Colors lock automatically the instant the match starts (claim_ludo_
+ * color rejects any call once room.status is no longer 'waiting'), and
+ * leaving the lobby releases a held color immediately (see
+ * leave_board_game_room / the partial index in migration
+ * 20260721060000_ludo_pre_match_color_selection.sql).
+ */
+export async function claimLudoColor(roomId: string, color: number | null) {
+  const { data, error } = await supabase.rpc('claim_ludo_color', { p_room_id: roomId, p_color: color })
+  if (error) return { error: error.message, player: null }
+  return { error: null, player: ((Array.isArray(data) ? data[0] : data) as BoardGamePlayer | undefined) ?? null }
+}
+
 export async function leaveBoardGameRoom(roomId: string) {
   await supabase.rpc('leave_board_game_room', { p_room_id: roomId }).then(undefined, () => {})
 }
@@ -1856,9 +1876,13 @@ export async function getMyBoardGameHistory(userId: string, gameId?: string, lim
       player: playerByRoom.get(room.id)!,
       coinsEarned: coinsByRoom.get(room.id) ?? 0,
       xpEarned: xpByRoom.get(room.id) ?? 0,
+      // seat_index is nullable pre-match now (round-3 color selection), but
+      // history/opponent rows only ever come from rooms that already
+      // finished, i.e. every seat was colored before start_board_game_room
+      // would let it start — the ?? 0 fallback is unreachable in practice.
       opponents: opponents.map((p) => ({
-        seatIndex: p.seat_index,
-        displayName: p.is_ai ? 'AI' : profileMap.get(p.user_id ?? '')?.username ?? `Player ${p.seat_index + 1}`,
+        seatIndex: p.seat_index ?? 0,
+        displayName: p.is_ai ? 'AI' : profileMap.get(p.user_id ?? '')?.username ?? `Player ${(p.seat_index ?? 0) + 1}`,
         isAi: p.is_ai,
         finalRank: p.final_rank,
       })),
@@ -1886,23 +1910,64 @@ export async function getBoardGameMatchDetail(roomId: string): Promise<BoardGame
 }
 
 /** Live-updates everything about a room the instant it changes — players joining/leaving/reconnecting, ready-state, room status, state/version bumps, new moves, spectator count. */
+/**
+ * Realtime is a nice-to-have fast path here, not the source of truth — the
+ * turn-timer watchdog (5s poll + focus/visibility triggers, see
+ * onlineController.ts) independently resolves and resyncs state regardless
+ * of Realtime's health. But a dropped websocket (very common on mobile:
+ * iOS Safari/WKWebView suspends open sockets when backgrounded, and
+ * Supabase's client does not automatically resubscribe a channel that
+ * reports CHANNEL_ERROR/TIMED_OUT/CLOSED) previously meant `onChange()`
+ * just silently stopped firing on data changes until something else
+ * (a poll tick or a manual refresh) happened to run. Now any non-SUBSCRIBED
+ * terminal status tears down and recreates the channel after a short delay,
+ * so live updates recover on their own instead of requiring the slower
+ * poll-only fallback to carry the whole match.
+ */
 export function subscribeToBoardGameRoom(roomId: string, onChange: () => void) {
-  diagLog('board-game-realtime', 'subscribing', { roomId })
-  const wrap = (table: string) => (payload: { eventType: string }) => {
-    diagLog('board-game-realtime', `${table} change`, { roomId, eventType: payload.eventType })
-    onChange()
+  let cancelled = false
+  let channel: ReturnType<typeof supabase.channel> | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  let retryDelayMs = 1000
+
+  const connect = () => {
+    if (cancelled) return
+    diagLog('board-game-realtime', 'subscribing', { roomId })
+    const wrap = (table: string) => (payload: { eventType: string }) => {
+      diagLog('board-game-realtime', `${table} change`, { roomId, eventType: payload.eventType })
+      onChange()
+    }
+    channel = supabase
+      .channel(`board-game-room:${roomId}:${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_rooms', filter: `id=eq.${roomId}` }, wrap('board_game_rooms'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_players', filter: `room_id=eq.${roomId}` }, wrap('board_game_players'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_state', filter: `room_id=eq.${roomId}` }, wrap('board_game_state'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_moves', filter: `room_id=eq.${roomId}` }, wrap('board_game_moves'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_spectators', filter: `room_id=eq.${roomId}` }, wrap('board_game_spectators'))
+      .subscribe((status, err) => {
+        diagLog('board-game-realtime', `channel status: ${status}`, { roomId, error: err ? String(err) : undefined })
+        if (cancelled) return
+        if (status === 'SUBSCRIBED') {
+          retryDelayMs = 1000 // healthy connection — reset backoff
+          onChange() // pick up anything that changed while the channel was down/connecting
+          return
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (channel) { try { supabase.removeChannel(channel) } catch { /* already gone */ } }
+          channel = null
+          if (retryTimer) clearTimeout(retryTimer)
+          retryTimer = setTimeout(() => { retryDelayMs = Math.min(retryDelayMs * 2, 15000); connect() }, retryDelayMs)
+        }
+      })
   }
-  const channel = supabase
-    .channel(`board-game-room:${roomId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_rooms', filter: `id=eq.${roomId}` }, wrap('board_game_rooms'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_players', filter: `room_id=eq.${roomId}` }, wrap('board_game_players'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_state', filter: `room_id=eq.${roomId}` }, wrap('board_game_state'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_moves', filter: `room_id=eq.${roomId}` }, wrap('board_game_moves'))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_game_spectators', filter: `room_id=eq.${roomId}` }, wrap('board_game_spectators'))
-    .subscribe((status, err) => {
-      diagLog('board-game-realtime', `channel status: ${status}`, { roomId, error: err ? String(err) : undefined })
-    })
-  return () => { diagLog('board-game-realtime', 'unsubscribing', { roomId }); supabase.removeChannel(channel) }
+  connect()
+
+  return () => {
+    cancelled = true
+    diagLog('board-game-realtime', 'unsubscribing', { roomId })
+    if (retryTimer) clearTimeout(retryTimer)
+    if (channel) supabase.removeChannel(channel)
+  }
 }
 
 // ---------------------------------------------------------------------

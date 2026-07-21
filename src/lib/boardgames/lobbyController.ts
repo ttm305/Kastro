@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   getBoardGameRoom, getBoardGamePlayers, getBoardGameSpectatorCount,
   setBoardGameReady, startBoardGameRoom, leaveBoardGameRoom, joinBoardGameRoom,
-  subscribeToBoardGameRoom, type BoardGameRoom,
+  claimLudoColor, subscribeToBoardGameRoom, type BoardGameRoom,
 } from '../api'
 
 /**
@@ -78,7 +78,13 @@ export function useBoardGameLobby(roomId: string | null, userId: string) {
   const myPlayer = players.find((p) => p.user_id === userId) ?? null
   const isHost = !!room && room.host_id === userId
   const allReady = players.length > 0 && players.every((p) => p.is_ready)
-  const canStart = isHost && !!room && players.length >= room.min_players && allReady
+  // Ludo players no longer get a seat/color auto-assigned on join — they
+  // must explicitly claim one (see claimColor below). For every other game
+  // seat_index is still auto-assigned at join time, so this is always true
+  // for them and never blocks starting. The host can't start until every
+  // currently-seated player has a color, same as the "everyone ready" gate.
+  const allColored = players.length > 0 && players.every((p) => p.seat_index !== null)
+  const canStart = isHost && !!room && players.length >= room.min_players && allReady && allColored
 
   // Every mutation refetches immediately on success instead of waiting on the
   // realtime echo to come back around — that's what made the Ready button
@@ -110,5 +116,19 @@ export function useBoardGameLobby(roomId: string | null, userId: string) {
     await leaveBoardGameRoom(roomId)
   }, [roomId])
 
-  return { loading, room, players, spectatorCount, myPlayer, isHost, allReady, canStart, setReady, startMatch, leave }
+  // Ludo-only (claim_ludo_color itself rejects non-Ludo rooms server-side) —
+  // claims or, with color=null, releases a color for the caller. Same
+  // instant-refetch pattern as setReady/startMatch: the acting client's own
+  // screen updates immediately instead of waiting on the realtime echo.
+  const claimColor = useCallback(
+    async (color: number | null) => {
+      if (!roomId) return { error: 'no room' }
+      const result = await claimLudoColor(roomId, color)
+      await refresh()
+      return result
+    },
+    [roomId, refresh]
+  )
+
+  return { loading, room, players, spectatorCount, myPlayer, isHost, allReady, allColored, canStart, setReady, startMatch, claimColor, leave }
 }

@@ -104,16 +104,38 @@ export function useOnlineBoardGame<TState, TMove>(args: {
   const [spectatorCount, setSpectatorCount] = useState(0)
   const [events, setEvents] = useState<BoardGameEvent[]>([])
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [actionError, setActionError] = useState<string | null>(null)
   const finalizedRef = useRef(false)
   const autoActedKeyRef = useRef<string | null>(null)
 
+  // ROOT CAUSE of the intermittent "timer hits zero, nobody can roll, even a
+  // refresh sometimes doesn't fix it" freeze: refresh() is triggered from
+  // FIVE independent, unordered sources — the initial mount, every Realtime
+  // change event on any of five subscribed tables, the 5s timeout-watchdog
+  // poll, and every tab focus/visibility change. Network responses do not
+  // arrive in the order their requests were sent. Without a guard, a STALE
+  // refresh() response (e.g. one that started fetching a split second
+  // BEFORE the server-side timeout resolver committed a turn advance) can
+  // land and overwrite React state AFTER a newer, already-correct response
+  // already did — silently reverting the turn indicator/dice/deadline back
+  // to the stuck-looking pre-resolution values, even though the server has
+  // actually moved on. This is why it was intermittent (a pure network-
+  // timing race) and why even reloading "sometimes" didn't help (a reload
+  // still fires its own refresh() concurrently with whatever the 5s watchdog
+  // or a Realtime echo triggers next). refreshSeqRef makes every refresh()
+  // call self-identifying; a response is only applied if no NEWER refresh()
+  // has been started since — i.e. the client can only ever move forward to
+  // fresher data, never backward to stale data, regardless of arrival order.
+  const refreshSeqRef = useRef(0)
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeqRef.current
     const [r, p, s, spec] = await Promise.all([
       getBoardGameRoom(roomId),
       getBoardGamePlayers(roomId, true), // includeLeft=true — seat roster must stay stable mid-match, see function doc
       getBoardGameState(roomId),
       getBoardGameSpectatorCount(roomId),
     ])
+    if (seq !== refreshSeqRef.current) return // a newer refresh() has since started — this response is stale, discard it
     setRoom(r)
     setPlayers(p)
     if (s) setStateRow({ state: s.state as unknown as TState, version: s.version })
@@ -144,11 +166,17 @@ export function useOnlineBoardGame<TState, TMove>(args: {
     return () => clearInterval(interval)
   }, [])
 
+  // seat_index is only ever null pre-match (round-3 color selection, still
+  // in the lobby) — by the time a room is 'active' and this online-match
+  // hook is driving actual gameplay, every seated player has a claimed,
+  // non-null color (start_board_game_room enforces it). The filter below is
+  // just satisfying the type checker for a state that can't occur here.
   const seats: OnlineSeat[] = players
+    .filter((p) => p.seat_index !== null)
     .map((p) => ({
-      seatIndex: p.seat_index,
+      seatIndex: p.seat_index as number,
       userId: p.user_id,
-      displayName: p.is_ai ? 'AI' : p.profile?.username ?? `Player ${p.seat_index + 1}`,
+      displayName: p.is_ai ? 'AI' : p.profile?.username ?? `Player ${(p.seat_index as number) + 1}`,
       isAI: p.is_ai,
       aiDifficulty: (p.ai_difficulty as BoardGameSeat['aiDifficulty']) ?? undefined,
       token: String(p.seat_index),
@@ -162,7 +190,13 @@ export function useOnlineBoardGame<TState, TMove>(args: {
 
   const state = stateRow?.state ?? null
   const currentSeatIndex = state !== null ? engine.currentSeatIndex(state) : null
-  const currentSeat = currentSeatIndex !== null ? seats[currentSeatIndex] ?? null : null
+  // Chosen colors can be sparse now (e.g. seats {0,3} — Red vs Blue, if
+  // that's what both players picked, skipping Green/Yellow entirely), so
+  // `seats` is no longer guaranteed to have an entry at every array
+  // position 0..n-1. Look the seat up by its actual seatIndex value, not by
+  // positional array indexing (seats[currentSeatIndex] would silently
+  // return undefined/the wrong entry the moment colors aren't contiguous).
+  const currentSeat = currentSeatIndex !== null ? seats.find((s) => s.seatIndex === currentSeatIndex) ?? null : null
   const mySeatIndex = seats.find((s) => s.userId === userId)?.seatIndex ?? null
   const isMyTurn = mySeatIndex !== null && currentSeatIndex === mySeatIndex
   const validMoves = state !== null && currentSeatIndex !== null ? engine.getValidMoves(state, currentSeatIndex) : []
@@ -192,13 +226,25 @@ export function useOnlineBoardGame<TState, TMove>(args: {
     if (serverSubmitMove) {
       // Server-authoritative path (Ludo): the server rolls, validates, and
       // computes the resulting state itself — the client sends only the
-      // intent and trusts whatever comes back verbatim. On error/conflict we
-      // don't touch local state; the next Realtime tick or poll resyncs us.
+      // intent and trusts whatever comes back verbatim.
       serverSubmitMove(roomId, expectedVersion, move ?? { type: 'pass' }).then((res) => {
         if (!res.error && res.result) {
-          setStateRow({ state: res.result.state as TState, version: res.result.version })
+          setActionError(null)
+          setStateRow((prev) => {
+            if (prev && res.result!.version <= prev.version) return prev
+            return { state: res.result!.state as TState, version: res.result!.version }
+          })
           if (res.result.events?.length) setEvents((e) => [...e, ...res.result!.events!].slice(-40))
+          return
         }
+        // On error/conflict (stale version, "already rolled", "not your
+        // turn", etc.) don't guess — surface it so the UI can tell the
+        // player something happened instead of silently doing nothing
+        // (which is indistinguishable from a freeze), and resync from the
+        // server immediately rather than waiting up to 5s for the next
+        // watchdog poll.
+        if (res.error) setActionError(res.error)
+        refresh()
       })
       return
     }
@@ -218,7 +264,7 @@ export function useOnlineBoardGame<TState, TMove>(args: {
       // don't apply it, and the next Realtime tick resyncs us to the true state.
       if (!res.error) setStateRow({ state: next, version: res.state?.version ?? expectedVersion + 1 })
     })
-  }, [state, stateRow, mySeatIndex, currentSeatIndex, result, engine, roomId, serverSubmitMove])
+  }, [state, stateRow, mySeatIndex, currentSeatIndex, result, engine, roomId, serverSubmitMove, refresh])
 
   // Auto-pass when it's my turn and I have zero legal moves — same rule useLocalBoardGame applies locally.
   useEffect(() => {
@@ -227,7 +273,9 @@ export function useOnlineBoardGame<TState, TMove>(args: {
     const key = `pass:${roomId}:${currentSeatIndex}:${stateRow.version}`
     if (autoActedKeyRef.current === key) return
     autoActedKeyRef.current = key
-    const t = setTimeout(() => submitMove(null), 400)
+    // Shortened from 400ms — just enough for the "No legal move" banner to
+    // register before the auto-pass fires, not a real wait.
+    const t = setTimeout(() => submitMove(null), 220)
     return () => clearTimeout(t)
   }, [result, isMyTurn, state, stateRow, validMoves.length, roomId, currentSeatIndex, submitMove])
 
@@ -346,5 +394,6 @@ export function useOnlineBoardGame<TState, TMove>(args: {
     submitMove,
     leave,
     forfeit,
+    actionError,
   }
 }
