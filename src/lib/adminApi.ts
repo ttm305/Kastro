@@ -604,7 +604,7 @@ export async function adminUpsertCosmeticItem(item: TablesInsert<'cosmetic_items
  */
 export async function adminUploadCosmeticMedia(
   itemId: string,
-  kind: 'video' | 'poster' | 'image',
+  kind: 'video' | 'poster' | 'image' | 'thumbnail',
   file: File,
 ): Promise<{ url: string | null; error: string | null }> {
   const ext = (file.name.split('.').pop() || (kind === 'video' ? 'mp4' : 'jpg')).toLowerCase()

@@ -786,6 +786,11 @@ export type Database = {
           video_url: string | null
           poster_url: string | null
           is_animated: boolean
+          slug: string | null
+          collection: string | null
+          thumbnail_url: string | null
+          is_featured: boolean
+          created_at: string
         }
         Insert: {
           id: string
@@ -808,6 +813,11 @@ export type Database = {
           video_url?: string | null
           poster_url?: string | null
           is_animated?: boolean
+          slug?: string | null
+          collection?: string | null
+          thumbnail_url?: string | null
+          is_featured?: boolean
+          created_at?: string
         }
         Update: {
           id?: string
@@ -830,6 +840,11 @@ export type Database = {
           video_url?: string | null
           poster_url?: string | null
           is_animated?: boolean
+          slug?: string | null
+          collection?: string | null
+          thumbnail_url?: string | null
+          is_featured?: boolean
+          created_at?: string
         }
         Relationships: []
       }

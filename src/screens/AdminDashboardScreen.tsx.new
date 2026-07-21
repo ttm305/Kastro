@@ -18,12 +18,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { Screen, Lang } from '../App'
 import Avatar from '../components/Avatar'
-import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 import { supabase } from '../lib/supabaseClient'
 import type { Tables } from '../lib/database.types'
 import { getActiveSeason } from '../lib/api'
-import { getDiagEntries, subscribeDiag, clearDiagEntries, type DiagEntry } from '../lib/diagnostics'
-import { safeTop, safeLeft, safeRight, tapTarget, tapTargetMinHeight } from '../lib/safeArea'
 import {
   adminGetOverviewStats,
   adminGetDau,
@@ -33,31 +30,13 @@ import {
   adminDeleteUser,
   adminAdjustXp,
   adminResetUserXp,
-  adminSetUserXp,
-  adminAdjustCoins,
-  adminSetUserCoins,
-  adminResetUserCoins,
   adminGiveBadge,
-  adminRemoveBadge,
-  adminSetCustomTitle,
-  adminCorrectUserGameStats,
-  adminGetUserGameStats,
-  adminResetPlayerProgress,
-  adminGetUserHistory,
-  type GameStatCorrection,
   adminSendPasswordReset,
   adminGetAccessCodes,
   adminCreateAccessCode,
   adminToggleAccessCode,
   adminDeleteAccessCode,
   adminGetUsersByCode,
-  adminGetBranches,
-  adminCreateBranch,
-  adminUpdateBranch,
-  adminSetBranchActive,
-  adminReorderBranches,
-  adminDeleteBranch,
-  type AdminBranch,
   adminGetAnnouncements,
   adminCreateAnnouncement,
   adminDeleteAnnouncement,
@@ -68,8 +47,6 @@ import {
   adminUpsertGame,
   adminSetGameActive,
   adminDeleteGame,
-  adminUploadGameCover,
-  adminReorderGames,
   adminUpsertAchievement,
   adminDeleteAchievement,
   adminGetAllTournaments,
@@ -80,33 +57,8 @@ import {
   adminGetAllChallenges,
   adminCreateChallenge,
   adminDeleteChallenge,
-  adminUpdateChallengeRewards,
-  adminGetCoinRewardConfig,
-  adminSetCoinReward,
-  type CoinRewardConfig,
   adminEndSeasonAndStartNew,
-  adminGetAllCosmeticsFull,
-  adminUpsertCosmeticItem,
-  adminSetCosmeticAvailable,
-  adminDeleteCosmeticItem,
-  adminUploadCosmeticMedia,
-  GENERIC_ADMIN_ERROR,
 } from '../lib/adminApi'
-
-// adminApi.ts never lets a raw Postgres/PostgREST error (a dropped-overload
-// signature, a column-type mismatch, an internal constraint name, etc.)
-// leave the API layer — every mutation function there returns either a
-// curated, already-safe validation message (our own RPCs' errcode '22023'
-// messages, e.g. "English name is required") or the GENERIC_ADMIN_ERROR
-// sentinel. This is the one place that turns that sentinel into the
-// localized, generic message the owner actually sees; every other error
-// string is already safe to show verbatim.
-function describeAdminError(error: string, ar: boolean): string {
-  if (error === GENERIC_ADMIN_ERROR) {
-    return ar ? 'تعذر حفظ التغيير. يرجى المحاولة مرة أخرى.' : 'The change could not be saved. Please try again.'
-  }
-  return error
-}
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -115,29 +67,22 @@ interface Props {
   userEmail: string
 }
 
-type AdminTab = 'overview' | 'users' | 'codes' | 'branches' | 'games' | 'content' | 'announcements' | 'log' | 'diagnostics'
+type AdminTab = 'overview' | 'users' | 'codes' | 'games' | 'content' | 'announcements' | 'log'
 
 interface SampleUser {
   id: string
   username: string
   email: string
-  role: 'player' | 'owner'
+  role: 'player'
   status: 'active' | 'suspended'
   isOnline: boolean
   level: number
   xp: number
-  coins: number
-  customTitle: string | null
-  customTitleAr: string | null
-  branch: string | null
-  branchAr: string | null
-  branchSlug: string | null
   loginCount: number
   lastActive: string
   registeredAt: string
   accessCode: string
   badges: string[]
-  badgeIds: string[]
   gamesPlayed: number
   avgScore: number
   avatarUrl: string | null
@@ -162,9 +107,6 @@ interface AdminLogEntry {
   category: string
   target: string
   detail: string
-  targetUserId: string | null
-  oldValue: string | null
-  newValue: string | null
 }
 
 interface Announcement {
@@ -191,7 +133,7 @@ interface GameRow {
   questions: { textEn: string; textAr: string; correct: number; attempts: number }[]
 }
 
-interface Achievement { id: string; name: string; nameAr?: string }
+interface Achievement { id: string; name: string }
 
 // ── Live data (fetched from Supabase — see loaders in root component) ────────
 // The shapes below (SampleUser/AccessCode/AdminLogEntry/Announcement/GameRow)
@@ -204,23 +146,16 @@ function toDisplayUser(u: any, codeMap: Map<string, string>): SampleUser {
     id: u.id,
     username: u.username,
     email: u.email,
-    role: u.role === 'owner' ? 'owner' : 'player',
+    role: 'player',
     status: u.status,
     isOnline: !!u.is_online,
     level: u.level,
     xp: u.xp,
-    coins: u.coins ?? 0,
-    customTitle: u.custom_title ?? null,
-    customTitleAr: u.custom_title_ar ?? null,
-    branch: u.branchName ?? null,
-    branchAr: u.branchNameAr ?? null,
-    branchSlug: u.branchSlug ?? null,
     loginCount: u.login_count,
     lastActive: u.last_login_at ? String(u.last_login_at).slice(0, 10) : '—',
     registeredAt: u.created_at ? String(u.created_at).slice(0, 10) : '—',
     accessCode: u.access_code_id ? (codeMap.get(u.access_code_id) ?? '—') : '—',
     badges: u.badges ?? [],
-    badgeIds: u.badgeIds ?? [],
     gamesPlayed: u.gamesPlayed ?? 0,
     avgScore: u.avgScore ?? 0,
     avatarUrl: u.avatar_url ?? null,
@@ -249,9 +184,6 @@ function toDisplayLog(e: any): AdminLogEntry {
     category: e.category,
     target: e.target,
     detail: e.detail,
-    targetUserId: e.target_user_id ?? null,
-    oldValue: e.old_value ?? null,
-    newValue: e.new_value ?? null,
   }
 }
 
@@ -392,11 +324,7 @@ const IcoKey   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="non
 const IcoBar   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
 const IcoMega  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
 const IcoLog   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-const IcoBug   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V3m-4 4-2-2m12 2 2-2M4 12h4m8 0h4M6 18l-2 2m16-2 2 2m-10-1v3m0-14a4 4 0 0 0-4 4"/></svg>
 const IcoGrid  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-const IcoBranch= () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18"/><path d="M5 21V9l7-6 7 6v12"/><path d="M9 21v-6h6v6"/></svg>
-const IcoUp    = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-const IcoDown2 = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
 const IcoSearch= () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
 const IcoCopy  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
 const IcoCheck = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -599,53 +527,19 @@ function OverviewTab({ lang, loading, users, games, stats, dau }: { lang:Lang; l
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
-// Collapsible card used to keep the user-details panel from becoming one
-// long undifferentiated list (spec requirement) — each control group gets
-// its own named, independently-expandable section.
-function Section({ title, open, onToggle, children, accent }: { title:string; open:boolean; onToggle:()=>void; children:React.ReactNode; accent?:string }) {
-  return (
-    <div style={{...S.card, marginBottom:10, padding:0, overflow:'hidden'}}>
-      <button
-        onClick={onToggle}
-        style={{
-          width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
-          background:'none', border:'none', cursor:'pointer', padding:'13px 14px',
-          color: accent || 'var(--foreground)', textAlign:'start',
-        }}
-      >
-        <span style={{fontSize:12.5, fontWeight:700, letterSpacing:0.3}}>{title}</span>
-        <span style={{display:'flex', transition:'transform 0.18s', transform:open?'rotate(180deg)':'rotate(0deg)', color:'rgba(var(--fg2-rgb),0.4)'}}><IcoDown/></span>
-      </button>
-      {open && <div style={{padding:'0 14px 14px'}}>{children}</div>}
-    </div>
-  )
-}
-
-function UsersTab({ lang, loading, users, achievements, games, refetchUsers, refetchLog }: { lang:Lang; loading:boolean; users:SampleUser[]; achievements:Achievement[]; games:GameRow[]; refetchUsers:()=>Promise<void>; refetchLog:()=>Promise<void> }) {
+function UsersTab({ lang, loading, users, achievements, refetchUsers, refetchLog }: { lang:Lang; loading:boolean; users:SampleUser[]; achievements:Achievement[]; refetchUsers:()=>Promise<void>; refetchLog:()=>Promise<void> }) {
   const ar = lang === 'ar'
   type FK = 'all'|'active'|'suspended'|'newest'|'oldest'|'mostactive'|'leastactive'|'level'|'xp'|'lastlogin'
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FK>('all')
   const [selected, setSelected] = useState<SampleUser|null>(null)
-  const [openSections, setOpenSections] = useState<Set<string>>(new Set(['overview']))
-  const [confirm, setConfirm] = useState<{type:'suspend'|'activate'|'delete'|'resetxp'|'resetcoins';user:SampleUser}|null>(null)
-  const [valueDialog, setValueDialog] = useState<{kind:'xp'|'coins'; mode:'add'|'remove'|'set'; user:SampleUser; val:string; reason:string}|null>(null)
-  const [badgeModal, setBadgeModal] = useState<{user:SampleUser; tab:'give'|'remove'; selectedId:string}|null>(null)
-  const [titleDraft, setTitleDraft] = useState<{title:string; titleAr:string}|null>(null)
-  const [statsForm, setStatsForm] = useState<{gameId:string; gp:string; wins:string; cs:string; bs:string; tc:string; tq:string; bsc:string}|null>(null)
-  const [userGameStats, setUserGameStats] = useState<Awaited<ReturnType<typeof adminGetUserGameStats>>>([])
-  const [history, setHistory] = useState<AdminLogEntry[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [resetModal, setResetModal] = useState<{user:SampleUser; typed:string; preserveBadges:boolean; preserveCosmetics:boolean}|null>(null)
+  const [confirm, setConfirm] = useState<{type:string;user:SampleUser}|null>(null)
+  const [editXp, setEditXp] = useState<{user:SampleUser;val:string}|null>(null)
+  const [giveBadge, setGiveBadge] = useState<{user:SampleUser; achievementId:string}|null>(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<{msg:string;color?:string}|null>(null)
 
   const flash = (msg:string, color?:string) => { setToast({msg,color}); setTimeout(()=>setToast(null),2000) }
-  const toggleSection = (key:string) => setOpenSections(prev => {
-    const next = new Set(prev)
-    if (next.has(key)) next.delete(key); else next.add(key)
-    return next
-  })
 
   // Keep the open detail sheet in sync with the freshest fetched row (e.g. after XP/status changes).
   useEffect(() => {
@@ -653,21 +547,6 @@ function UsersTab({ lang, loading, users, achievements, games, refetchUsers, ref
     const fresh = users.find(u=>u.id===selected.id)
     if (fresh) setSelected(fresh)
   }, [users])
-
-  // Load this user's per-game stats + account history whenever a new user is opened.
-  useEffect(() => {
-    if (!selected) { setHistory([]); setUserGameStats([]); return }
-    let cancelled = false
-    setHistoryLoading(true)
-    Promise.all([adminGetUserHistory(selected.id), adminGetUserGameStats(selected.id)]).then(([h, s]) => {
-      if (cancelled) return
-      setHistory(h.map(toDisplayLog))
-      setUserGameStats(s)
-      setHistoryLoading(false)
-    })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id])
 
   const chips: {key:FK;label:string}[] = [
     {key:'all',        label:ar?'الكل':'All'},
@@ -696,137 +575,67 @@ function UsersTab({ lang, loading, users, achievements, games, refetchUsers, ref
       return 0
     })
 
-  const isOwnerTarget = (u:SampleUser) => u.role === 'owner'
-
-  const exec = async (type:'suspend'|'activate'|'delete'|'resetxp'|'resetcoins', user:SampleUser) => {
+  const exec = async (type:string, user:SampleUser) => {
     setBusy(true)
-    const { error } =
-      type==='delete'      ? await adminDeleteUser(user.id) :
-      type==='resetxp'     ? await adminResetUserXp(user.id) :
-      type==='resetcoins'  ? await adminResetUserCoins(user.id) :
-      await adminSetUserStatus(user.id, type==='suspend'?'suspended':'active')
+    const { error } = type==='delete'
+      ? await adminDeleteUser(user.id)
+      : await adminSetUserStatus(user.id, type==='suspend'?'suspended':'active')
     setBusy(false)
     setConfirm(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    if (type==='delete') setSelected(null)
+    if (error) { flash(error,'#ff4785'); return }
+    setSelected(null)
     await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog)))
-    if (type==='suspend')    flash(ar?'تم تعليق الحساب':'Account suspended','#ff4785')
-    if (type==='activate')   flash(ar?'تم تفعيل الحساب':'Account activated')
-    if (type==='delete')     flash(ar?'تم حذف الحساب':'Account deleted','#ff4785')
-    if (type==='resetxp')    flash(ar?'تمت إعادة تعيين XP إلى 0':'XP reset to 0','#ff4785')
-    if (type==='resetcoins') flash(ar?'تمت إعادة تعيين العملات':'Coins reset','#ff4785')
+    if (type==='suspend') flash(ar?'تم تعليق الحساب':'Account suspended','#ff4785')
+    if (type==='activate') flash(ar?'تم تفعيل الحساب':'Account activated')
+    if (type==='delete') flash(ar?'تم حذف الحساب':'Account deleted','#ff4785')
   }
 
-  const applyValueDialog = async () => {
-    if (!valueDialog) return
-    const n = parseInt(valueDialog.val, 10)
-    if (isNaN(n)) { setValueDialog(null); return }
-    setBusy(true)
-    let error: string | null = null
-    if (valueDialog.kind === 'xp') {
-      if (valueDialog.mode === 'set') ({ error } = await adminSetUserXp(valueDialog.user.id, n, valueDialog.reason))
-      else ({ error } = await adminAdjustXp(valueDialog.user.id, valueDialog.mode==='remove' ? -Math.abs(n) : Math.abs(n), valueDialog.reason))
-    } else {
-      if (valueDialog.mode === 'set') ({ error } = await adminSetUserCoins(valueDialog.user.id, n, valueDialog.reason))
-      else ({ error } = await adminAdjustCoins(valueDialog.user.id, valueDialog.mode==='remove' ? -Math.abs(n) : Math.abs(n), valueDialog.reason))
+  const applyXp = async () => {
+    if (!editXp) return
+    const d = parseInt(editXp.val)
+    if (!isNaN(d)) {
+      setBusy(true)
+      const { error } = await adminAdjustXp(editXp.user.id, d)
+      setBusy(false)
+      if (error) { flash(error,'#ff4785'); setEditXp(null); return }
+      await Promise.all([refetchUsers(), refetchLog()])
+      flash(ar?`تم تعديل XP: ${d>0?'+':''}${d}`:`XP adjusted: ${d>0?'+':''}${d}`)
     }
-    setBusy(false)
-    setValueDialog(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog)))
-    flash(ar?'تم الحفظ':'Saved')
+    setEditXp(null)
   }
 
-  const applyBadgeGive = async (achievementId:string) => {
-    if (!badgeModal) return
+  const resetXp = async () => {
+    if (!editXp) return
     setBusy(true)
-    const { error } = await adminGiveBadge(badgeModal.user.id, achievementId)
+    const { error } = await adminResetUserXp(editXp.user.id)
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    setEditXp(null)
+    if (error) { flash(error,'#ff4785'); return }
     await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) { adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog))) }
-    flash(ar?`تم منح شارة لـ @${badgeModal.user.username}`:`Badge awarded to @${badgeModal.user.username}`,'#ffd700')
+    flash(ar?'تمت إعادة تعيين XP إلى 0':'XP reset to 0','#ff4785')
   }
 
-  const applyBadgeRemove = async (achievementId:string) => {
-    if (!badgeModal) return
+  const applyBadge = async () => {
+    if (!giveBadge || !giveBadge.achievementId) return
     setBusy(true)
-    const { error } = await adminRemoveBadge(badgeModal.user.id, achievementId)
+    const { error } = await adminGiveBadge(giveBadge.user.id, giveBadge.achievementId)
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    setGiveBadge(null)
+    if (error) { flash(error,'#ff4785'); return }
     await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) { adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog))) }
-    flash(ar?'تمت إزالة الشارة':'Badge removed','#ff4785')
-  }
-
-  const saveTitle = async () => {
-    if (!selected || !titleDraft) return
-    setBusy(true)
-    const { error } = await adminSetCustomTitle(selected.id, titleDraft.title.trim(), titleDraft.titleAr.trim())
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog)))
-    flash(ar?'تم حفظ اللقب':'Title saved')
-  }
-
-  const saveStats = async () => {
-    if (!selected || !statsForm || !statsForm.gameId) return
-    const correction: GameStatCorrection = {
-      gamesPlayed: parseInt(statsForm.gp,10)||0,
-      wins: parseInt(statsForm.wins,10)||0,
-      currentStreak: parseInt(statsForm.cs,10)||0,
-      bestStreak: parseInt(statsForm.bs,10)||0,
-      totalCorrect: parseInt(statsForm.tc,10)||0,
-      totalQuestions: parseInt(statsForm.tq,10)||0,
-      bestScore: parseInt(statsForm.bsc,10)||0,
-    }
-    setBusy(true)
-    const { error } = await adminCorrectUserGameStats(selected.id, statsForm.gameId, correction)
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    const fresh = await adminGetUserGameStats(selected.id)
-    setUserGameStats(fresh)
-    await refetchLog()
-    adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog)))
-    flash(ar?'تم تصحيح الإحصائيات':'Statistics corrected')
-  }
-
-  const doResetProgress = async () => {
-    if (!resetModal || resetModal.typed !== 'RESET') return
-    setBusy(true)
-    const { error } = await adminResetPlayerProgress(resetModal.user.id, {
-      preserveBadges: resetModal.preserveBadges,
-      preserveCosmetics: resetModal.preserveCosmetics,
-    })
-    setBusy(false)
-    setResetModal(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await Promise.all([refetchUsers(), refetchLog()])
-    if (selected) {
-      const [h, s] = await Promise.all([adminGetUserHistory(selected.id), adminGetUserGameStats(selected.id)])
-      setHistory(h.map(toDisplayLog)); setUserGameStats(s)
-    }
-    flash(ar?'تم إعادة ضبط تقدم اللاعب':'Player progress reset','#ff4785')
+    flash(ar?`تم منح شارة لـ @${giveBadge.user.username}`:`Badge awarded to @${giveBadge.user.username}`,'#ffd700')
   }
 
   const resetPassword = async (user:SampleUser) => {
     setBusy(true)
     const { error } = await adminSendPasswordReset(user.id, user.email)
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetchLog()
-    if (selected) adminGetUserHistory(selected.id).then((h)=>setHistory(h.map(toDisplayLog)))
     flash(ar?'تم إرسال رابط إعادة التعيين':'Password reset sent')
   }
 
   if (loading) return <div style={{display:'flex',flexDirection:'column',gap:10}}>{[...Array(4)].map((_,i)=><SkeletonCard key={i}/>)}</div>
-
-  const ownedBadgeSet = new Set(selected?.badgeIds ?? [])
-  const givableBadges = achievements.filter(a=>!ownedBadgeSet.has(a.id))
-  const removableBadges = achievements.filter(a=>ownedBadgeSet.has(a.id))
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -853,7 +662,7 @@ function UsersTab({ lang, loading, users, achievements, games, refetchUsers, ref
 
       {/* User rows */}
       {sorted.map(u=>(
-        <div key={u.id} style={{...S.card,cursor:'pointer',transition:'background 0.15s'}} onClick={()=>{setSelected(u); setOpenSections(new Set(['overview']))}}>
+        <div key={u.id} style={{...S.card,cursor:'pointer',transition:'background 0.15s'}} onClick={()=>setSelected(u)}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <div style={{position:'relative',flexShrink:0}}>
               <Avatar url={u.avatarUrl} size={40}/>
@@ -862,7 +671,6 @@ function UsersTab({ lang, loading, users, achievements, games, refetchUsers, ref
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                 <span style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>@{u.username}</span>
-                {u.customTitle && <span style={{...S.pill,background:'rgba(255,215,0,0.12)',color:'#ffd700'}}>{lang==='ar'&&u.customTitleAr?u.customTitleAr:u.customTitle}</span>}
                 <span style={{...S.pill,background:u.status==='active'?'rgba(0,230,118,0.12)':'rgba(255,71,133,0.12)',color:u.status==='active'?'#00e676':'#ff4785'}}>
                   {u.status==='active'?(ar?'نشط':'Active'):(ar?'موقوف':'Suspended')}
                 </span>
@@ -880,365 +688,137 @@ function UsersTab({ lang, loading, users, achievements, games, refetchUsers, ref
       {/* User detail sheet */}
       {selected && (
         <div style={S.sheet} onClick={e=>{if(e.target===e.currentTarget)setSelected(null)}}>
-          <div style={{...S.sheetIn, paddingBottom:'max(36px, env(safe-area-inset-bottom))'}}>
+          <div style={S.sheetIn}>
             <div style={S.handle}/>
-
             {/* Header */}
             <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
               <div style={{position:'relative'}}>
                 <Avatar url={selected.avatarUrl} size={56}/>
                 {selected.isOnline && <div style={{position:'absolute',bottom:2,right:2,width:11,height:11,borderRadius:'50%',background:'#00e676',border:'2px solid #0d0d1f'}}/>}
               </div>
-              <div style={{flex:1,minWidth:0}}>
+              <div style={{flex:1}}>
                 <div style={{fontSize:17,fontWeight:800,color:'var(--foreground)',fontFamily:"'Exo 2',sans-serif"}}>@{selected.username}</div>
                 <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.45)',marginTop:1}}>{selected.email}</div>
                 <div style={{display:'flex',gap:6,marginTop:6,flexWrap:'wrap'}}>
                   <span style={{...S.pill,background:selected.status==='active'?'rgba(0,230,118,0.12)':'rgba(255,71,133,0.12)',color:selected.status==='active'?'#00e676':'#ff4785'}}>
                     {selected.status==='active'?(ar?'نشط':'Active'):(ar?'موقوف':'Suspended')}
                   </span>
-                  <span style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{selected.role==='owner'?(ar?'مالك':'Owner'):(ar?'لاعب':'Player')}</span>
-                  {selected.customTitle && <span style={{...S.pill,background:'rgba(255,215,0,0.12)',color:'#ffd700'}}>{lang==='ar'&&selected.customTitleAr?selected.customTitleAr:selected.customTitle}</span>}
+                  <span style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{ar?'لاعب':'Player'}</span>
+                  <span style={{...S.pill,background:selected.isOnline?'rgba(0,230,118,0.1)':'rgba(var(--fg-rgb),0.05)',color:selected.isOnline?'#00e676':'rgba(var(--fg2-rgb),0.4)'}}>
+                    {selected.isOnline?(ar?'متصل الآن':'Online now'):(ar?`آخر ظهور: ${selected.lastActive}`:`Last seen: ${selected.lastActive}`)}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* ── Account Overview ──────────────────────────────────────── */}
-            <Section title={ar?'نظرة عامة على الحساب':'Account Overview'} open={openSections.has('overview')} onToggle={()=>toggleSection('overview')}>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                {[
-                  {l:ar?'المستوى':'Level',           v:selected.level},
-                  {l:ar?'نقاط XP':'XP',              v:selected.xp.toLocaleString()},
-                  {l:ar?'العملات':'Coins',           v:selected.coins.toLocaleString()},
-                  {l:ar?'عدد الجلسات':'Login Count',  v:selected.loginCount},
-                  {l:ar?'كود التسجيل':'Access Code',  v:selected.accessCode},
-                  {l:ar?'تاريخ التسجيل':'Registered', v:selected.registeredAt},
-                  {l:ar?'ألعاب مكتملة':'Games Played',v:selected.gamesPlayed},
-                  {l:ar?'متوسط النتيجة':'Avg Score',  v:`${selected.avgScore}%`},
-                  {l:ar?'الفرع':'Branch',             v:selected.branch ? (ar && selected.branchAr ? selected.branchAr : selected.branch) : (ar?'—':'—')},
-                ].map(s=>(
-                  <div key={s.l} style={{background:'rgba(var(--fg-rgb),0.04)',borderRadius:8,padding:'9px 10px'}}>
-                    <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:3}}>{s.l}</div>
-                    <div style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>{String(s.v)}</div>
-                  </div>
-                ))}
-              </div>
-            </Section>
+            {/* Stats grid */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
+              {[
+                {l:ar?'المستوى':'Level',           v:selected.level},
+                {l:ar?'نقاط XP':'XP',              v:selected.xp.toLocaleString()},
+                {l:ar?'عدد الجلسات':'Login Count',  v:selected.loginCount},
+                {l:ar?'كود التسجيل':'Access Code',  v:selected.accessCode},
+                {l:ar?'تاريخ التسجيل':'Registered', v:selected.registeredAt},
+                {l:ar?'ألعاب مكتملة':'Games Played',v:selected.gamesPlayed},
+                {l:ar?'متوسط النتيجة':'Avg Score',  v:`${selected.avgScore}%`},
+                {l:ar?'الدور':'Role',               v:ar?'لاعب':'Player'},
+              ].map(s=>(
+                <div key={s.l} style={{background:'rgba(var(--fg-rgb),0.04)',borderRadius:8,padding:'9px 10px'}}>
+                  <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:3}}>{s.l}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>{String(s.v)}</div>
+                </div>
+              ))}
+            </div>
 
-            {/* ── Status and Access ─────────────────────────────────────── */}
-            <Section title={ar?'الحالة والوصول':'Status and Access'} open={openSections.has('status')} onToggle={()=>toggleSection('status')}>
-              <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                {selected.status==='active'
-                  ?<button style={{...S.danger,justifyContent:'center',width:'100%'}} disabled={busy||isOwnerTarget(selected)} onClick={()=>setConfirm({type:'suspend',user:selected})}>{ar?'تعليق الحساب':'Suspend Account'}</button>
-                  :<button style={{...S.ghost,justifyContent:'center',width:'100%',color:'#00e676',border:'1px solid rgba(0,230,118,0.3)'}} disabled={busy} onClick={()=>setConfirm({type:'activate',user:selected})}>{ar?'تفعيل الحساب':'Activate Account'}</button>
-                }
-                {isOwnerTarget(selected) && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{ar?'لا يمكن تعليق حساب المالك.':'The owner account cannot be suspended.'}</div>}
-                <button style={{...S.ghost,justifyContent:'center',width:'100%'}} disabled={busy} onClick={()=>resetPassword(selected)}>{ar?'إرسال رابط إعادة تعيين كلمة المرور':'Send Password Reset'}</button>
-              </div>
-            </Section>
-
-            {/* ── XP, Level and Coins ───────────────────────────────────── */}
-            <Section title={ar?'XP والمستوى والعملات':'XP, Level and Coins'} open={openSections.has('econ')} onToggle={()=>toggleSection('econ')}>
-              <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.45)',marginBottom:8}}>{ar?`الحالي: ${selected.xp.toLocaleString()} XP · المستوى ${selected.level}`:`Current: ${selected.xp.toLocaleString()} XP · Level ${selected.level}`}</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'xp',mode:'add',user:selected,val:'',reason:''})}>{ar?'إضافة XP':'Add XP'}</button>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'xp',mode:'remove',user:selected,val:'',reason:''})}>{ar?'خصم XP':'Remove XP'}</button>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'xp',mode:'set',user:selected,val:String(selected.xp),reason:''})}>{ar?'تحديد قيمة XP':'Set Exact XP'}</button>
-                <button style={{...S.ghost,color:'#ff4785',borderColor:'rgba(255,71,133,0.3)'}} disabled={busy} onClick={()=>setConfirm({type:'resetxp',user:selected})}>{ar?'إعادة تعيين XP إلى 0':'Reset XP to 0'}</button>
-              </div>
-              <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.45)',margin:'12px 0 8px'}}>{ar?`رصيد العملات الحالي: ${selected.coins.toLocaleString()}`:`Current coin balance: ${selected.coins.toLocaleString()}`}</div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'coins',mode:'add',user:selected,val:'',reason:''})}>{ar?'إضافة عملات':'Add Coins'}</button>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'coins',mode:'remove',user:selected,val:'',reason:''})}>{ar?'خصم عملات':'Remove Coins'}</button>
-                <button style={S.ghost} disabled={busy} onClick={()=>setValueDialog({kind:'coins',mode:'set',user:selected,val:String(selected.coins),reason:''})}>{ar?'تحديد رصيد دقيق':'Set Exact Coins'}</button>
-                <button style={{...S.ghost,color:'#ff4785',borderColor:'rgba(255,71,133,0.3)'}} disabled={busy} onClick={()=>setConfirm({type:'resetcoins',user:selected})}>{ar?'إعادة تعيين العملات إلى 0':'Reset Coins to 0'}</button>
-              </div>
-            </Section>
-
-            {/* ── Statistics ─────────────────────────────────────────────── */}
-            <Section title={ar?'الإحصائيات':'Statistics'} open={openSections.has('stats')} onToggle={()=>toggleSection('stats')}>
-              <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:10,lineHeight:1.5}}>
-                {ar?'الفوز/الخسارة والمتوسط تُحسب دائماً من هذه القيم — لا تُخزَّن بشكل منفصل، لذا تصحيحها هنا يبقيها متسقة في كل مكان.':'Losses and average score are always derived from these values, never stored separately — correcting them here keeps every other screen consistent.'}
-              </div>
-              <select
-                style={{...S.input,marginBottom:10}}
-                value={statsForm?.gameId ?? ''}
-                onChange={e=>{
-                  const gameId = e.target.value
-                  const row = userGameStats.find(r=>r.game_id===gameId)
-                  setStatsForm({
-                    gameId,
-                    gp: String(row?.games_played ?? 0),
-                    wins: String(row?.wins ?? 0),
-                    cs: String(row?.current_streak ?? 0),
-                    bs: String(row?.best_streak ?? 0),
-                    tc: String(row?.total_correct ?? 0),
-                    tq: String(row?.total_questions ?? 0),
-                    bsc: String(row?.best_score ?? 0),
-                  })
-                }}
-              >
-                <option value="">{ar?'اختر لعبة للتصحيح…':'Select a game to correct…'}</option>
-                {games.map(g=><option key={g.id} value={g.id}>{ar?g.nameAr:g.name}</option>)}
-              </select>
-
-              {statsForm && statsForm.gameId && (() => {
-                const row = userGameStats.find(r=>r.game_id===statsForm.gameId)
-                const losses = Math.max(0, (parseInt(statsForm.gp,10)||0) - (parseInt(statsForm.wins,10)||0))
-                const tq = parseInt(statsForm.tq,10)||0
-                const tc = parseInt(statsForm.tc,10)||0
-                const avg = tq>0 ? Math.round((tc/tq)*100) : 0
-                return (
-                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                    {!row && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{ar?'لا توجد إحصائيات مسجلة لهذه اللعبة بعد — التصحيح سينشئ سجلاً جديداً.':'No stats recorded for this game yet — correcting will create a new row.'}</div>}
-                    {[
-                      {k:'gp',  l:ar?'ألعاب مكتملة':'Games Played'},
-                      {k:'wins',l:ar?'فوز':'Wins'},
-                      {k:'cs',  l:ar?'التتابع الحالي':'Current Streak'},
-                      {k:'bs',  l:ar?'أفضل تتابع':'Best Streak'},
-                      {k:'tc',  l:ar?'إجابات صحيحة':'Total Correct'},
-                      {k:'tq',  l:ar?'إجمالي الأسئلة':'Total Questions'},
-                      {k:'bsc', l:ar?'أفضل نتيجة':'Best Score'},
-                    ].map(f=>(
-                      <div key={f.k} style={{display:'flex',alignItems:'center',gap:8}}>
-                        <label style={{flex:1,fontSize:12,color:'rgba(var(--fg2-rgb),0.6)'}}>{f.l}</label>
-                        <input
-                          style={{...S.input,width:90}}
-                          type="number"
-                          value={(statsForm as any)[f.k]}
-                          onChange={e=>setStatsForm({...statsForm,[f.k]:e.target.value})}
-                        />
-                      </div>
-                    ))}
-                    <div style={{display:'flex',gap:16,fontSize:11,color:'rgba(var(--fg2-rgb),0.45)',marginTop:2}}>
-                      <span>{ar?'الخسائر (مُشتقة):':'Losses (derived):'} <strong style={{color:'var(--foreground)'}}>{losses}</strong></span>
-                      <span>{ar?'المتوسط (مُشتق):':'Average (derived):'} <strong style={{color:'var(--foreground)'}}>{avg}%</strong></span>
-                    </div>
-                    <button style={{...S.primary,justifyContent:'center',marginTop:6}} disabled={busy} onClick={saveStats}>{ar?'حفظ التصحيح':'Save Correction'}</button>
-                  </div>
-                )
-              })()}
-            </Section>
-
-            {/* ── Roles and Custom Title ────────────────────────────────── */}
-            <Section title={ar?'الأدوار واللقب المخصص':'Roles and Custom Title'} open={openSections.has('role')} onToggle={()=>{toggleSection('role'); if(!titleDraft) setTitleDraft({title:selected.customTitle??'', titleAr:selected.customTitleAr??''})}}>
+            {/* Badges */}
+            {selected.badges.length>0 && (
               <div style={{marginBottom:14}}>
-                <div style={S.label}>{ar?'وصول النظام':'System access'}</div>
-                <div style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>{selected.role==='owner'?(ar?'مالك':'Owner'):(ar?'لاعب':'Player')}</div>
-                <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',marginTop:2}}>{ar?'محمي على مستوى قاعدة البيانات — لا يمكن تغييره من هذه الواجهة.':'Database-enforced — cannot be changed from this screen.'}</div>
+                <div style={S.sectionHead}>{ar?'الشارات':'Badges'}</div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  {selected.badges.map(b=><span key={b} style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{b}</span>)}
+                </div>
               </div>
-              <div>
-                <div style={S.label}>{ar?'اللقب المخصص (إنجليزي)':'Custom title (English)'}</div>
-                <input style={{...S.input,marginBottom:8}} placeholder={ar?'مثال: قائد الفريق':'e.g. Team Leader'} value={titleDraft?.title ?? ''} onChange={e=>setTitleDraft({title:e.target.value, titleAr:titleDraft?.titleAr ?? ''})} maxLength={40}/>
-                <div style={S.label}>{ar?'اللقب المخصص (عربي)':'Custom title (Arabic)'}</div>
-                <input style={{...S.input,marginBottom:10}} placeholder="مثال: قائد الفريق" value={titleDraft?.titleAr ?? ''} onChange={e=>setTitleDraft({title:titleDraft?.title ?? '', titleAr:e.target.value})} maxLength={40}/>
-                <button style={{...S.primary,justifyContent:'center',width:'100%'}} disabled={busy} onClick={saveTitle}>{ar?'حفظ اللقب':'Save Title'}</button>
-              </div>
-            </Section>
+            )}
+            {selected.badges.length===0 && (
+              <div style={{marginBottom:14,fontSize:12,color:'rgba(var(--fg2-rgb),0.3)'}}>{ar?'لا توجد شارات بعد.':'No badges yet.'}</div>
+            )}
 
-            {/* ── Badges and Achievements ───────────────────────────────── */}
-            <Section title={ar?'الشارات والإنجازات':'Badges and Achievements'} open={openSections.has('badges')} onToggle={()=>toggleSection('badges')}>
-              {selected.badges.length>0
-                ? <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12}}>
-                    {selected.badges.map(b=><span key={b} style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{b}</span>)}
-                  </div>
-                : <div style={{marginBottom:12,fontSize:12,color:'rgba(var(--fg2-rgb),0.3)'}}>{ar?'لا توجد شارات بعد.':'No badges yet.'}</div>
+            {/* Account history */}
+            <div style={{...S.card,marginBottom:16}}>
+              <div style={S.sectionHead}>{ar?'سجل الحساب':'Account History'}</div>
+              <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.35)'}}>{ar?'لا توجد أحداث حديثة.':'No recent account events recorded.'}</div>
+            </div>
+
+            {/* Actions */}
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {selected.status==='active'
+                ?<button style={{...S.danger,justifyContent:'center',width:'100%'}} onClick={()=>setConfirm({type:'suspend',user:selected})}>{ar?'تعليق الحساب':'Suspend Account'}</button>
+                :<button style={{...S.ghost,justifyContent:'center',width:'100%',color:'#00e676',border:'1px solid rgba(0,230,118,0.3)'}} onClick={()=>setConfirm({type:'activate',user:selected})}>{ar?'تفعيل الحساب':'Activate Account'}</button>
               }
-              <button style={{...S.ghost,justifyContent:'center',width:'100%',color:'#ffd700',border:'1px solid rgba(255,215,0,0.25)'}} disabled={busy} onClick={()=>setBadgeModal({user:selected,tab:'give',selectedId:''})}>{ar?'إدارة الشارات':'Manage Badges'}</button>
-            </Section>
-
-            {/* ── Account History ────────────────────────────────────────── */}
-            <Section title={ar?'سجل الحساب':'Account History'} open={openSections.has('history')} onToggle={()=>toggleSection('history')}>
-              {historyLoading && <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.35)'}}>{ar?'جارٍ التحميل…':'Loading…'}</div>}
-              {!historyLoading && history.length===0 && (
-                <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.35)'}}>{ar?'لا توجد أحداث حديثة.':'No recent account events recorded.'}</div>
-              )}
-              {!historyLoading && history.length>0 && (
-                <div style={{display:'flex',flexDirection:'column',gap:8,maxHeight:280,overflowY:'auto'}}>
-                  {history.map(h=>(
-                    <div key={h.id} style={{background:'rgba(var(--fg-rgb),0.03)',borderRadius:8,padding:'8px 10px'}}>
-                      <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
-                        <span style={{fontSize:12,fontWeight:700,color:'var(--foreground)'}}>{h.action}</span>
-                        <span style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',flexShrink:0}}>{h.timestamp}</span>
-                      </div>
-                      {h.detail && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.5)',marginTop:2}}>{h.detail}</div>}
-                      {(h.oldValue || h.newValue) && (
-                        <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.4)',marginTop:2}}>
-                          {h.oldValue ?? '—'} → {h.newValue ?? '—'}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
-
-            {/* ── Reset and Destructive Actions ─────────────────────────── */}
-            <Section title={ar?'إعادة الضبط والإجراءات الحساسة':'Reset and Destructive Actions'} open={openSections.has('danger')} onToggle={()=>toggleSection('danger')} accent="#ff4785">
-              {isOwnerTarget(selected) ? (
-                <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.45)'}}>{ar?'لا يمكن إعادة ضبط أو حذف حساب المالك.':'The owner account cannot be reset or deleted.'}</div>
-              ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  <button style={{...S.danger,justifyContent:'center',width:'100%'}} disabled={busy} onClick={()=>setResetModal({user:selected,typed:'',preserveBadges:false,preserveCosmetics:false})}>{ar?'إعادة ضبط تقدم اللاعب':'Reset Player Progress'}</button>
-                  <button style={{...S.danger,justifyContent:'center',width:'100%'}} disabled={busy} onClick={()=>setConfirm({type:'delete',user:selected})}>{ar?'حذف الحساب':'Delete Account'}</button>
-                </div>
-              )}
-            </Section>
-
-            <button style={{...S.ghost,width:'100%',justifyContent:'center',marginTop:4}} onClick={()=>setSelected(null)}>{ar?'إغلاق':'Close'}</button>
+              <button style={{...S.ghost,justifyContent:'center',width:'100%'}} onClick={()=>setEditXp({user:selected,val:''})}>{ar?'تعديل نقاط XP':'Edit XP'}</button>
+              <button style={{...S.ghost,justifyContent:'center',width:'100%',color:'#ffd700',border:'1px solid rgba(255,215,0,0.25)'}} onClick={()=>setGiveBadge({user:selected,achievementId:achievements[0]?.id ?? ''})}>{ar?'منح / سحب شارة':'Give / Remove Badge'}</button>
+              <button style={{...S.ghost,justifyContent:'center',width:'100%'}} onClick={()=>resetPassword(selected)}>{ar?'إرسال رابط إعادة تعيين كلمة المرور':'Send Password Reset'}</button>
+              <button style={{...S.danger,justifyContent:'center',width:'100%'}} onClick={()=>setConfirm({type:'delete',user:selected})}>{ar?'حذف الحساب':'Delete Account'}</button>
+            </div>
+            <button style={{...S.ghost,width:'100%',justifyContent:'center',marginTop:12}} onClick={()=>setSelected(null)}>{ar?'إغلاق':'Close'}</button>
           </div>
         </div>
       )}
 
-      {/* Confirm dialog — status / delete / XP+coin resets */}
+      {/* Confirm dialog */}
       {confirm && (
         <div style={S.dialog}>
           <div style={S.dbox}>
             <div style={{fontSize:15,fontWeight:700,color:confirm.type==='activate'?'#00e676':'#ff4785',marginBottom:8}}>
-              {confirm.type==='delete'?(ar?'تأكيد الحذف':'Confirm Delete')
-                :confirm.type==='suspend'?(ar?'تأكيد التعليق':'Confirm Suspend')
-                :confirm.type==='resetxp'?(ar?'تأكيد إعادة تعيين XP':'Confirm XP Reset')
-                :confirm.type==='resetcoins'?(ar?'تأكيد إعادة تعيين العملات':'Confirm Coin Reset')
-                :(ar?'تأكيد التفعيل':'Confirm Activate')}
+              {confirm.type==='delete'?(ar?'تأكيد الحذف':'Confirm Delete'):confirm.type==='suspend'?(ar?'تأكيد التعليق':'Confirm Suspend'):(ar?'تأكيد التفعيل':'Confirm Activate')}
             </div>
             <div style={{fontSize:13,color:'rgba(var(--fg2-rgb),0.55)',lineHeight:1.5,marginBottom:20}}>
               {confirm.type==='delete'
                 ?(ar?`سيتم حذف حساب "@${confirm.user.username}" نهائياً. لا يمكن التراجع عن هذا الإجراء.`:`"@${confirm.user.username}"'s account will be permanently deleted. This cannot be undone.`)
                 :confirm.type==='suspend'
                 ?(ar?`سيتم تعليق حساب "@${confirm.user.username}". سيتم الحفاظ على تقدمهم.`:`"@${confirm.user.username}" will be suspended. Their progress will be preserved.`)
-                :confirm.type==='resetxp'
-                ?(ar?`سيتم تعيين XP لـ "@${confirm.user.username}" إلى 0.`:`Reset this user's XP to 0?`)
-                :confirm.type==='resetcoins'
-                ?(ar?`سيتم تعيين رصيد عملات "@${confirm.user.username}" إلى الرصيد الافتراضي.`:`Reset this user's coins to the starting balance?`)
                 :(ar?`سيتم إعادة تفعيل حساب "@${confirm.user.username}".`:`"@${confirm.user.username}"'s account will be reactivated.`)}
             </div>
             <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>setConfirm(null)}>{ar?'إلغاء':'Cancel'}</button>
+              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setConfirm(null)}>{ar?'إلغاء':'Cancel'}</button>
               <button
                 style={{...(confirm.type==='activate'?{...S.ghost,color:'#00e676',border:'1px solid rgba(0,230,118,0.3)'}:S.danger),flex:1,justifyContent:'center'}}
-                disabled={busy}
                 onClick={()=>exec(confirm.type,confirm.user)}>
-                {confirm.type==='delete'?(ar?'حذف':'Delete')
-                  :confirm.type==='suspend'?(ar?'تعليق':'Suspend')
-                  :confirm.type==='resetxp'?(ar?'إعادة التعيين':'Reset')
-                  :confirm.type==='resetcoins'?(ar?'إعادة التعيين':'Reset')
-                  :(ar?'تفعيل':'Activate')}
+                {confirm.type==='delete'?(ar?'حذف':'Delete'):confirm.type==='suspend'?(ar?'تعليق':'Suspend'):(ar?'تفعيل':'Activate')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Add/Remove/Set XP or Coins dialog */}
-      {valueDialog && (
+      {/* Edit XP dialog */}
+      {editXp && (
         <div style={S.dialog}>
           <div style={S.dbox}>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:4}}>
-              {valueDialog.kind==='xp'
-                ? (valueDialog.mode==='set' ? (ar?'تحديد قيمة XP':'Set Exact XP') : valueDialog.mode==='add' ? (ar?'إضافة XP':'Add XP') : (ar?'خصم XP':'Remove XP'))
-                : (valueDialog.mode==='set' ? (ar?'تحديد رصيد العملات':'Set Exact Coins') : valueDialog.mode==='add' ? (ar?'إضافة عملات':'Add Coins') : (ar?'خصم عملات':'Remove Coins'))
-              }
+            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:4}}>{ar?'تعديل نقاط XP':'Adjust XP'}</div>
+            <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:12}}>{ar?`الحالية: ${editXp.user.xp.toLocaleString()} XP`:`Current: ${editXp.user.xp.toLocaleString()} XP`}</div>
+            <input style={{...S.input,marginBottom:14}} type="number" placeholder={ar?'مثال: +500 أو -200':'e.g. +500 or -200'} value={editXp.val} onChange={e=>setEditXp({...editXp,val:e.target.value})} autoFocus/>
+            <div style={{display:'flex',gap:8,marginBottom:8}}>
+              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setEditXp(null)}>{ar?'إلغاء':'Cancel'}</button>
+              <button style={{...S.primary,flex:1,justifyContent:'center'}} onClick={applyXp}>{ar?'تطبيق':'Apply'}</button>
             </div>
-            <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:12}}>
-              {ar?`الحالي: `:`Current: `}{valueDialog.kind==='xp' ? valueDialog.user.xp.toLocaleString() : valueDialog.user.coins.toLocaleString()}{valueDialog.kind==='xp'?' XP':(ar?' عملة':' coins')}
-            </div>
-            <input
-              style={{...S.input,marginBottom:10}}
-              type="number"
-              min={0}
-              placeholder={valueDialog.mode==='set' ? (ar?'القيمة الجديدة':'New value') : (ar?'المقدار':'Amount')}
-              value={valueDialog.val}
-              onChange={e=>setValueDialog({...valueDialog,val:e.target.value})}
-              autoFocus
-            />
-            <input
-              style={{...S.input,marginBottom:14}}
-              placeholder={ar?'السبب (اختياري)':'Reason (optional)'}
-              value={valueDialog.reason}
-              onChange={e=>setValueDialog({...valueDialog,reason:e.target.value})}
-            />
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>setValueDialog(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy || !valueDialog.val} onClick={applyValueDialog}>{ar?'تطبيق':'Apply'}</button>
-            </div>
+            <button style={{...S.ghost,width:'100%',justifyContent:'center',color:'#ff4785',borderColor:'rgba(255,71,133,0.3)'}} onClick={resetXp}>{ar?'إعادة التعيين إلى 0':'Reset to 0'}</button>
           </div>
         </div>
       )}
 
-      {/* Give / Remove badge — tabbed */}
-      {badgeModal && (
+      {/* Give badge dialog — minimal picker required to call adminGiveBadge(userId, achievementId) */}
+      {giveBadge && (
         <div style={S.dialog}>
           <div style={S.dbox}>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:4}}>{ar?'إدارة الشارات':'Manage Badges'}</div>
-            <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:12}}>@{badgeModal.user.username}</div>
-
-            <div style={{display:'flex',gap:6,marginBottom:14,background:'rgba(var(--fg-rgb),0.05)',borderRadius:8,padding:3}}>
-              <button
-                onClick={()=>setBadgeModal({...badgeModal,tab:'give',selectedId:''})}
-                style={{flex:1,padding:'7px 0',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,background:badgeModal.tab==='give'?'linear-gradient(135deg,#7c3aed,#9d6fff)':'transparent',color:badgeModal.tab==='give'?'#fff':'rgba(var(--fg2-rgb),0.6)'}}
-              >{ar?'منح شارة':'Give Badge'}</button>
-              <button
-                onClick={()=>setBadgeModal({...badgeModal,tab:'remove',selectedId:''})}
-                style={{flex:1,padding:'7px 0',borderRadius:6,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,background:badgeModal.tab==='remove'?'linear-gradient(135deg,#ff4785,#ff6fa5)':'transparent',color:badgeModal.tab==='remove'?'#fff':'rgba(var(--fg2-rgb),0.6)'}}
-              >{ar?'سحب شارة':'Remove Badge'}</button>
-            </div>
-
-            {badgeModal.tab==='give' ? (
-              givableBadges.length===0 ? (
-                <Empty icon="🏅" title={ar?'لا توجد شارات لمنحها':'No badges to give'} sub={ar?'يملك هذا المستخدم كل الشارات المتاحة بالفعل.':'This user already owns every available badge.'}/>
-              ) : (
-                <>
-                  <select style={{...S.input,marginBottom:14}} value={badgeModal.selectedId} onChange={e=>setBadgeModal({...badgeModal,selectedId:e.target.value})}>
-                    <option value="">{ar?'اختر شارة…':'Select a badge…'}</option>
-                    {givableBadges.map(a=><option key={a.id} value={a.id}>{lang==='ar'&&a.nameAr?a.nameAr:a.name}</option>)}
-                  </select>
-                  <div style={{display:'flex',gap:8}}>
-                    <button style={{...S.ghost,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>setBadgeModal(null)}>{ar?'إلغاء':'Cancel'}</button>
-                    <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy||!badgeModal.selectedId} onClick={()=>applyBadgeGive(badgeModal.selectedId)}>{ar?'منح':'Give'}</button>
-                  </div>
-                </>
-              )
-            ) : (
-              removableBadges.length===0 ? (
-                <Empty icon="🏅" title={ar?'لا توجد شارات لسحبها':'No badges to remove'} sub={ar?'لا يملك هذا المستخدم أي شارات بعد.':'This user does not own any badges yet.'}/>
-              ) : (
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {removableBadges.map(a=>(
-                    <div key={a.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,background:'rgba(var(--fg-rgb),0.04)',borderRadius:8,padding:'8px 10px'}}>
-                      <span style={{fontSize:13,color:'var(--foreground)'}}>{lang==='ar'&&a.nameAr?a.nameAr:a.name}</span>
-                      <button style={{...S.danger,padding:'5px 10px',fontSize:11}} disabled={busy} onClick={()=>applyBadgeRemove(a.id)}>{ar?'سحب':'Remove'}</button>
-                    </div>
-                  ))}
-                  <button style={{...S.ghost,justifyContent:'center',marginTop:4}} disabled={busy} onClick={()=>setBadgeModal(null)}>{ar?'إغلاق':'Close'}</button>
-                </div>
-              )
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Reset Player Progress — serious, type-to-confirm */}
-      {resetModal && (
-        <div style={S.dialog}>
-          <div style={{...S.dbox,maxWidth:360}}>
-            <div style={{fontSize:15,fontWeight:700,color:'#ff4785',marginBottom:8}}>{ar?'إعادة ضبط تقدم اللاعب':'Reset Player Progress'}</div>
-            <div style={{fontSize:12.5,color:'rgba(var(--fg2-rgb),0.6)',lineHeight:1.6,marginBottom:12}}>
-              {ar
-                ? `سيتم إعادة تعيين XP والمستوى والعملات والإحصائيات وتقدم التحديات والمواسم لـ "@${resetModal.user.username}" إلى حالة لاعب جديد. سيتم الاحتفاظ بالحساب والبريد الإلكتروني واسم المستخدم وتاريخ التسجيل والفرع. لا يمكن التراجع عن هذا الإجراء.`
-                : `XP, level, coins, statistics, challenge progress, and season progress for "@${resetModal.user.username}" will be reset to a fresh-player state. The account, email, username, registration date, and branch are preserved. This cannot be undone.`}
-            </div>
-            <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:'rgba(var(--fg2-rgb),0.6)',marginBottom:8,cursor:'pointer'}}>
-              <input type="checkbox" checked={resetModal.preserveBadges} onChange={e=>setResetModal({...resetModal,preserveBadges:e.target.checked})}/>
-              {ar?'الاحتفاظ بالشارات المكتسبة':'Preserve earned badges'}
-            </label>
-            <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:'rgba(var(--fg2-rgb),0.6)',marginBottom:14,cursor:'pointer'}}>
-              <input type="checkbox" checked={resetModal.preserveCosmetics} onChange={e=>setResetModal({...resetModal,preserveCosmetics:e.target.checked})}/>
-              {ar?'الاحتفاظ بمقتنيات المظهر':'Preserve cosmetic inventory'}
-            </label>
-            <div style={S.label}>{ar?'اكتب RESET للتأكيد':'Type RESET to confirm'}</div>
-            <input style={{...S.input,marginBottom:14}} value={resetModal.typed} onChange={e=>setResetModal({...resetModal,typed:e.target.value})} placeholder="RESET" autoFocus/>
+            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:4}}>{ar?'منح شارة':'Give Badge'}</div>
+            <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:12}}>@{giveBadge.user.username}</div>
+            <select style={{...S.input,marginBottom:14}} value={giveBadge.achievementId} onChange={e=>setGiveBadge({...giveBadge,achievementId:e.target.value})}>
+              {achievements.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
             <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>setResetModal(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.danger,flex:1,justifyContent:'center'}} disabled={busy || resetModal.typed!=='RESET'} onClick={doResetProgress}>{ar?'إعادة الضبط':'Reset Progress'}</button>
+              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setGiveBadge(null)}>{ar?'إلغاء':'Cancel'}</button>
+              <button style={{...S.primary,flex:1,justifyContent:'center'}} onClick={applyBadge} disabled={busy||!giveBadge.achievementId}>{ar?'منح':'Give'}</button>
             </div>
           </div>
         </div>
@@ -1298,7 +878,7 @@ function CodesTab({ lang, loading, codes, refetchCodes, refetchLog, userEmail }:
     setBusy(true)
     const { error, data } = await adminCreateAccessCode(form.note, maxUses, exp, form.code || undefined)
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setShowCreate(false)
     setForm({note:'',maxUses:'50',unlimited:false,expiry:'never',customDate:'',code:''})
     await Promise.all([refetchCodes(), refetchLog()])
@@ -1319,7 +899,7 @@ function CodesTab({ lang, loading, codes, refetchCodes, refetchLog, userEmail }:
     const { error } = await adminToggleAccessCode(c.id)
     setBusy(false)
     setConfirmDisable(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await Promise.all([refetchCodes(), refetchLog()])
     flash(c.status==='active'?(ar?'تم تعطيل الكود':'Code disabled'):(ar?'تم تفعيل الكود':'Code enabled'))
   }
@@ -1328,7 +908,7 @@ function CodesTab({ lang, loading, codes, refetchCodes, refetchLog, userEmail }:
     const { error } = await adminDeleteAccessCode(c.id)
     setBusy(false)
     setConfirmDelete(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await Promise.all([refetchCodes(), refetchLog()])
     flash(ar?'تم حذف الكود':'Code deleted','#ff4785')
   }
@@ -1548,287 +1128,6 @@ function CodesTab({ lang, loading, codes, refetchCodes, refetchLog, userEmail }:
   )
 }
 
-// ── Branch Management ────────────────────────────────────────────────────────
-// Owner-only. Every mutation below calls a SECURITY DEFINER RPC that
-// re-checks owner status server-side (private.require_owner()) — nothing
-// here is a hidden-button-only restriction. See migration
-// dynamic_branch_management for admin_get_branches/admin_create_branch/
-// admin_update_branch/admin_set_branch_active/admin_reorder_branches/
-// admin_delete_branch.
-
-function BranchesTab({ lang, refetchLog }: { lang:Lang; refetchLog:()=>Promise<void> }) {
-  const ar = lang === 'ar'
-  const [branches, setBranches] = useState<AdminBranch[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [toast, setToast] = useState<{msg:string;color?:string}|null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  const [createForm, setCreateForm] = useState({code:'',nameEn:'',nameAr:'',isActive:true})
-  const [editing, setEditing] = useState<AdminBranch|null>(null)
-  const [editForm, setEditForm] = useState({nameEn:'',nameAr:''})
-  const [confirmToggle, setConfirmToggle] = useState<AdminBranch|null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<AdminBranch|null>(null)
-
-  const flash = (msg:string,color?:string) => { setToast({msg,color}); setTimeout(()=>setToast(null),2500) }
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setLoadError(null)
-    const { error, data } = await adminGetBranches()
-    setLoading(false)
-    if (error) { setLoadError(error); return }
-    setBranches(data)
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const create = async () => {
-    if (!createForm.code.trim() || !createForm.nameEn.trim() || !createForm.nameAr.trim()) return
-    setBusy(true)
-    const { error } = await adminCreateBranch(createForm.code, createForm.nameAr, createForm.nameEn, createForm.isActive)
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setShowCreate(false)
-    setCreateForm({code:'',nameEn:'',nameAr:'',isActive:true})
-    await Promise.all([load(), refetchLog()])
-    flash(ar?'تم إنشاء الفرع':'Branch created')
-  }
-
-  const startEdit = (b:AdminBranch) => { setEditing(b); setEditForm({nameEn:b.name_en,nameAr:b.name_ar}) }
-
-  const saveEdit = async () => {
-    if (!editing || !editForm.nameEn.trim() || !editForm.nameAr.trim()) return
-    setBusy(true)
-    const { error } = await adminUpdateBranch(editing.id, editForm.nameAr, editForm.nameEn)
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setEditing(null)
-    await Promise.all([load(), refetchLog()])
-    flash(ar?'تم تحديث الفرع':'Branch updated')
-  }
-
-  const toggleActive = async (b:AdminBranch) => {
-    setBusy(true)
-    const { error } = await adminSetBranchActive(b.id, !b.is_active)
-    setBusy(false)
-    setConfirmToggle(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await Promise.all([load(), refetchLog()])
-    flash(b.is_active?(ar?'تم إلغاء تفعيل الفرع':'Branch deactivated'):(ar?'تم تفعيل الفرع':'Branch activated'))
-  }
-
-  const reorder = async (index:number, direction:-1|1) => {
-    const target = index + direction
-    if (target < 0 || target >= branches.length) return
-    const next = [...branches]
-    ;[next[index], next[target]] = [next[target], next[index]]
-    setBranches(next) // optimistic — reflects instantly, corrected by load() below regardless
-    setBusy(true)
-    const { error } = await adminReorderBranches(next.map(b=>b.id))
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); await load(); return }
-    await Promise.all([load(), refetchLog()])
-  }
-
-  const del = async (b:AdminBranch) => {
-    setBusy(true)
-    const { error } = await adminDeleteBranch(b.id)
-    setBusy(false)
-    setConfirmDelete(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await Promise.all([load(), refetchLog()])
-    flash(ar?'تم حذف الفرع':'Branch deleted','#ff4785')
-  }
-
-  if (loading) return <div style={{display:'flex',flexDirection:'column',gap:10}}>{[...Array(3)].map((_,i)=><Skeleton key={i} h={110}/>)}</div>
-
-  if (loadError) {
-    return (
-      <div style={{...S.card,textAlign:'center'}}>
-        <div style={{fontSize:13,color:'#ff4785',marginBottom:12,lineHeight:1.5}}>
-          {ar?'تعذّر تحميل الفروع.':'Could not load branches.'}
-        </div>
-        <button style={{...S.primary,justifyContent:'center'}} onClick={load}>{ar?'إعادة المحاولة':'Retry'}</button>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{display:'flex',flexDirection:'column',gap:12}}>
-      <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',lineHeight:1.5}}>
-        {ar
-          ? 'الفروع النشطة تظهر فوراً في نموذج التسجيل لكل المستخدمين والأجهزة — لا حاجة لإصدار تحديث للتطبيق.'
-          : 'Active branches appear immediately in the registration form for every user and device — no app update required.'}
-      </div>
-
-      <button style={{...S.primary,alignSelf:'flex-start'}} onClick={()=>setShowCreate(true)}>
-        + {ar?'إضافة فرع':'Add Branch'}
-      </button>
-
-      {branches.length===0 && <Empty icon="🏢" title={ar?'لا توجد فروع':'No branches'} sub={ar?'أضف فرعاً ليظهر في نموذج التسجيل':'Add a branch to make it available at registration'}/>}
-
-      {branches.map((b,i)=>(
-        <div key={b.id} style={S.card}>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:14,fontWeight:700,color:'var(--foreground)'}}>{ar?b.name_ar:b.name_en}</div>
-              <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:'rgba(var(--fg2-rgb),0.4)',marginTop:2}}>{b.code}</div>
-            </div>
-            <span style={{...S.pill,background:b.is_active?'rgba(0,230,118,0.12)':'rgba(255,71,133,0.12)',color:b.is_active?'#00e676':'#ff4785'}}>
-              {b.is_active?(ar?'نشط':'Active'):(ar?'غير نشط':'Inactive')}
-            </span>
-          </div>
-
-          <div style={{display:'flex',gap:16,fontSize:11,color:'rgba(var(--fg2-rgb),0.45)',marginBottom:10}}>
-            <span>{ar?'المستخدمون:':'Users:'} <b style={{color:'var(--foreground)'}}>{b.user_count}</b></span>
-            <span>{ar?'الترتيب:':'Order:'} <b style={{color:'var(--foreground)'}}>{i+1}</b></span>
-          </div>
-
-          <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-            <button style={{...S.ghost,fontSize:11,padding:'6px 12px'}} disabled={busy} onClick={()=>startEdit(b)}>{ar?'تعديل':'Edit'}</button>
-            <button style={{...S.ghost,fontSize:11,padding:'6px 12px'}} disabled={busy} onClick={()=>setConfirmToggle(b)}>
-              {b.is_active?(ar?'إلغاء التفعيل':'Deactivate'):(ar?'تفعيل':'Activate')}
-            </button>
-            <button
-              style={{...S.danger,fontSize:11,padding:'6px 12px',opacity:b.user_count>0?0.4:1,cursor:b.user_count>0?'not-allowed':'pointer'}}
-              disabled={busy||b.user_count>0}
-              title={b.user_count>0?(ar?'لا يمكن الحذف — يوجد مستخدمون مرتبطون بهذا الفرع':'Cannot delete — users are linked to this branch'):undefined}
-              onClick={()=>setConfirmDelete(b)}
-            >
-              {ar?'حذف':'Delete'}
-            </button>
-            <div style={{display:'flex',gap:2,marginInlineStart:'auto'}}>
-              <button style={{...S.ghost,padding:'6px 8px'}} disabled={busy||i===0} onClick={()=>reorder(i,-1)} title={ar?'تحريك لأعلى':'Move up'}><IcoUp/></button>
-              <button style={{...S.ghost,padding:'6px 8px'}} disabled={busy||i===branches.length-1} onClick={()=>reorder(i,1)} title={ar?'تحريك لأسفل':'Move down'}><IcoDown2/></button>
-            </div>
-          </div>
-          {b.user_count>0 && (
-            <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',marginTop:8,lineHeight:1.4}}>
-              {ar?'إلغاء التفعيل بدلاً من الحذف — لا يمكن حذف فرع لديه حسابات مستخدمين مرتبطة.':'Deactivate instead of deleting — a branch with linked user accounts cannot be deleted.'}
-            </div>
-          )}
-        </div>
-      ))}
-
-      {/* Create sheet */}
-      {showCreate && (
-        <div style={S.sheet} onClick={e=>{if(e.target===e.currentTarget)setShowCreate(false)}}>
-          <div style={S.sheetIn}>
-            <div style={S.handle}/>
-            <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:18}}>{ar?'إضافة فرع جديد':'Add New Branch'}</div>
-            <div style={{display:'flex',flexDirection:'column',gap:14}}>
-              <div>
-                <span style={S.label}>{ar?'الرمز (حروف إنجليزية صغيرة وأرقام و_ فقط)':'Code (lowercase letters, numbers, and _ only)'}</span>
-                <input
-                  style={{...S.input,fontFamily:"'JetBrains Mono',monospace"}}
-                  placeholder="north_branch"
-                  value={createForm.code}
-                  onChange={e=>setCreateForm(f=>({...f,code:e.target.value.toLowerCase().replace(/[^a-z0-9_]/g,'')}))}
-                />
-                <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',marginTop:4}}>
-                  {ar?'دائم بعد الإنشاء — لا يمكن تغييره لاحقاً.':'Permanent once created — cannot be changed later.'}
-                </div>
-              </div>
-              <div>
-                <span style={S.label}>{ar?'الاسم بالإنجليزية':'English Name'}</span>
-                <input style={S.input} placeholder="North Branch" value={createForm.nameEn} onChange={e=>setCreateForm(f=>({...f,nameEn:e.target.value}))}/>
-              </div>
-              <div>
-                <span style={S.label}>{ar?'الاسم بالعربية':'Arabic Name'}</span>
-                <input style={{...S.input,fontFamily:"'Cairo',sans-serif"}} dir="rtl" placeholder="الفرع الشمالي" value={createForm.nameAr} onChange={e=>setCreateForm(f=>({...f,nameAr:e.target.value}))}/>
-              </div>
-              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
-                <input type="checkbox" checked={createForm.isActive} onChange={e=>setCreateForm(f=>({...f,isActive:e.target.checked}))}/>
-                <span style={{fontSize:13,color:'rgba(var(--fg2-rgb),0.65)'}}>{ar?'نشط فور الإنشاء':'Active immediately'}</span>
-              </label>
-              <div style={{display:'flex',gap:8,paddingTop:4}}>
-                <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setShowCreate(false)}>{ar?'إلغاء':'Cancel'}</button>
-                <button
-                  style={{...S.primary,flex:1,justifyContent:'center'}}
-                  disabled={busy||!createForm.code.trim()||!createForm.nameEn.trim()||!createForm.nameAr.trim()}
-                  onClick={create}
-                >
-                  {ar?'إضافة الفرع':'Add Branch'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit sheet */}
-      {editing && (
-        <div style={S.sheet} onClick={e=>{if(e.target===e.currentTarget)setEditing(null)}}>
-          <div style={S.sheetIn}>
-            <div style={S.handle}/>
-            <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:4}}>{ar?'تعديل الفرع':'Edit Branch'}</div>
-            <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginBottom:18}}>{editing.code}</div>
-            <div style={{display:'flex',flexDirection:'column',gap:14}}>
-              <div>
-                <span style={S.label}>{ar?'الاسم بالإنجليزية':'English Name'}</span>
-                <input style={S.input} value={editForm.nameEn} onChange={e=>setEditForm(f=>({...f,nameEn:e.target.value}))}/>
-              </div>
-              <div>
-                <span style={S.label}>{ar?'الاسم بالعربية':'Arabic Name'}</span>
-                <input style={{...S.input,fontFamily:"'Cairo',sans-serif"}} dir="rtl" value={editForm.nameAr} onChange={e=>setEditForm(f=>({...f,nameAr:e.target.value}))}/>
-              </div>
-              <div style={{display:'flex',gap:8,paddingTop:4}}>
-                <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setEditing(null)}>{ar?'إلغاء':'Cancel'}</button>
-                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy||!editForm.nameEn.trim()||!editForm.nameAr.trim()} onClick={saveEdit}>
-                  {ar?'حفظ':'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Activate/deactivate confirm */}
-      {confirmToggle && (
-        <div style={S.dialog}>
-          <div style={S.dbox}>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:8}}>
-              {confirmToggle.is_active?(ar?'إلغاء تفعيل هذا الفرع؟':'Deactivate this branch?'):(ar?'تفعيل هذا الفرع؟':'Activate this branch?')}
-            </div>
-            <div style={{fontSize:13,color:'rgba(var(--fg2-rgb),0.55)',lineHeight:1.5,marginBottom:18}}>
-              {confirmToggle.is_active
-                ? (ar?'لن يظهر هذا الفرع بعد الآن في نموذج التسجيل. المستخدمون الحاليون المرتبطون به لن يتأثروا.':"This branch will no longer appear in the registration form. Existing users linked to it are not affected.")
-                : (ar?'سيظهر هذا الفرع مجدداً في نموذج التسجيل لكل المستخدمين والأجهزة.':'This branch will appear again in the registration form for every user and device.')}
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setConfirmToggle(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>toggleActive(confirmToggle)}>
-                {confirmToggle.is_active?(ar?'إلغاء التفعيل':'Deactivate'):(ar?'تفعيل':'Activate')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete confirm — the Delete button itself is already disabled
-          when user_count > 0, this is the last-resort server-side guard's
-          UI counterpart, not the only check. */}
-      {confirmDelete && (
-        <div style={S.dialog}>
-          <div style={{...S.dbox,border:'1px solid rgba(255,71,133,0.15)'}}>
-            <div style={{fontSize:15,fontWeight:700,color:'#ff4785',marginBottom:8}}>{ar?'حذف الفرع؟':'Delete Branch?'}</div>
-            <div style={{fontSize:13,color:'rgba(var(--fg2-rgb),0.55)',lineHeight:1.5,marginBottom:18}}>
-              {ar?`سيتم حذف الفرع "${confirmDelete.name_ar}" نهائياً. هذا الإجراء لا يمكن التراجع عنه.`:`Branch "${confirmDelete.name_en}" will be permanently deleted. This cannot be undone.`}
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setConfirmDelete(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.danger,flex:1,justifyContent:'center'}} disabled={busy} onClick={()=>del(confirmDelete)}>{ar?'حذف':'Delete'}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <Toast msg={toast?.msg||''} visible={!!toast} color={toast?.color}/>
-    </div>
-  )
-}
-
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
 function GamesTab({ lang, loading, games, wau, mau }: { lang:Lang; loading:boolean; games:GameRow[]; wau:number[]; mau:number[] }) {
@@ -1975,7 +1274,7 @@ function AnnouncementsTab({ lang, loading, items, refetchAnnouncements, refetchL
     setBusy(true)
     const { error } = await adminCreateAnnouncement(form.title, form.body, form.pinned, form.scheduledAt||null, form.expiresAt||null)
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setForm({title:'',body:'',pinned:false,scheduledAt:'',expiresAt:''})
     setShowForm(false)
     await Promise.all([refetchAnnouncements(), refetchLog()])
@@ -1984,7 +1283,7 @@ function AnnouncementsTab({ lang, loading, items, refetchAnnouncements, refetchL
 
   const remove = async (id:string) => {
     const { error } = await adminDeleteAnnouncement(id)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await Promise.all([refetchAnnouncements(), refetchLog()])
     flash(ar?'تم حذف الإعلان':'Announcement deleted','#ff4785')
   }
@@ -2074,30 +1373,11 @@ type AchievementFull = Tables<'achievements'>
 type TournamentFull = Tables<'tournaments'>
 type ChallengeFull = Tables<'challenges'>
 type SeasonFull = Tables<'seasons'>
-type CosmeticItemFull = Tables<'cosmetic_items'>
 
 const RARITIES = ['common','uncommon','rare','epic','legendary'] as const
 const BADGE_CATEGORIES = ['gameplay','progression','consistency','social','general'] as const
 const CRITERIA_TYPES = ['manual','games_played','total_xp','streak','weekly_streak','level','perfect_score'] as const
 const rarityColor: Record<string,string> = { common:'#9ca3af', uncommon:'#34d399', rare:'#60a5fa', epic:'#c084fc', legendary:'#ffd700' }
-
-// Cosmetics Shop catalog — separate 5-tier rarity scale (Common → Mythic) from
-// the achievement-badge RARITIES above, per the explicit requirement that
-// purchasable shop collectibles stay a distinct system from earned badges.
-const SHOP_RARITIES = ['common','rare','epic','legendary','mythic'] as const
-const shopRarityColor: Record<string,string> = { common:'#9ca3af', rare:'#60a5fa', epic:'#c084fc', legendary:'#ffd700', mythic:'#ff3d68' }
-const COSMETIC_TYPES = ['frame','banner','title','avatar_decoration','badge_collectible','trophy','victory_animation','emote','seasonal'] as const
-const cosmeticTypeLabel: Record<string,{en:string;ar:string}> = {
-  frame: { en:'Frame', ar:'إطار' },
-  banner: { en:'Background', ar:'خلفية' },
-  title: { en:'Nameplate', ar:'لقب' },
-  avatar_decoration: { en:'Decoration', ar:'زخرفة' },
-  badge_collectible: { en:'Badge', ar:'ميدالية' },
-  trophy: { en:'Trophy', ar:'كأس' },
-  victory_animation: { en:'Victory FX', ar:'حركة انتصار' },
-  emote: { en:'Emote', ar:'تعبير' },
-  seasonal: { en:'Seasonal', ar:'موسمي' },
-}
 
 function slugify(s: string) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)
@@ -2105,12 +1385,10 @@ function slugify(s: string) {
 
 function ContentTab({ lang }: { lang:Lang }) {
   const ar = lang === 'ar'
-  const [section, setSection] = useState<'games'|'badges'|'cosmetics'|'coins'|'tournaments'|'challenges'|'season'>('games')
+  const [section, setSection] = useState<'games'|'badges'|'tournaments'|'challenges'|'season'>('games')
   const [loading, setLoading] = useState(true)
   const [gamesFull, setGamesFull] = useState<GameFull[]>([])
   const [achievementsFull, setAchievementsFull] = useState<AchievementFull[]>([])
-  const [cosmeticsFull, setCosmeticsFull] = useState<CosmeticItemFull[]>([])
-  const [coinConfig, setCoinConfig] = useState<CoinRewardConfig[]>([])
   const [tournamentsFull, setTournamentsFull] = useState<TournamentFull[]>([])
   const [challengesFull, setChallengesFull] = useState<ChallengeFull[]>([])
   const [activeSeason, setActiveSeason] = useState<SeasonFull|null>(null)
@@ -2118,11 +1396,11 @@ function ContentTab({ lang }: { lang:Lang }) {
   const flash = (msg:string,color?:string) => { setToast({msg,color}); setTimeout(()=>setToast(null),2200) }
 
   const refetchAll = useCallback(async () => {
-    const [g,a,cos,cc,t,c,s] = await Promise.all([
-      adminGetAllGames(), adminGetAllAchievementsFull(), adminGetAllCosmeticsFull(), adminGetCoinRewardConfig(), adminGetAllTournaments(), adminGetAllChallenges(), getActiveSeason(),
+    const [g,a,t,c,s] = await Promise.all([
+      adminGetAllGames(), adminGetAllAchievementsFull(), adminGetAllTournaments(), adminGetAllChallenges(), getActiveSeason(),
     ])
-    setGamesFull(g as GameFull[]); setAchievementsFull(a as AchievementFull[]); setCosmeticsFull(cos as CosmeticItemFull[]); setCoinConfig(cc)
-    setTournamentsFull(t as TournamentFull[]); setChallengesFull(c as ChallengeFull[]); setActiveSeason(s as SeasonFull|null)
+    setGamesFull(g as GameFull[]); setAchievementsFull(a as AchievementFull[]); setTournamentsFull(t as TournamentFull[])
+    setChallengesFull(c as ChallengeFull[]); setActiveSeason(s as SeasonFull|null)
   }, [])
 
   useEffect(() => { let cancelled=false; (async () => { setLoading(true); await refetchAll(); if(!cancelled) setLoading(false) })(); return ()=>{cancelled=true} }, [refetchAll])
@@ -2130,8 +1408,6 @@ function ContentTab({ lang }: { lang:Lang }) {
   const sections: {key:typeof section;en:string;ar:string}[] = [
     {key:'games',       en:'Games',       ar:'الألعاب'},
     {key:'badges',      en:'Badges',      ar:'الشارات'},
-    {key:'cosmetics',   en:'Cosmetics Shop', ar:'متجر المظاهر'},
-    {key:'coins',       en:'Coins Economy', ar:'اقتصاد الكوينز'},
     {key:'tournaments', en:'Tournaments', ar:'البطولات'},
     {key:'challenges',  en:'Challenges',  ar:'التحديات'},
     {key:'season',      en:'Season',      ar:'الموسم'},
@@ -2153,8 +1429,6 @@ function ContentTab({ lang }: { lang:Lang }) {
         <>
           {section==='games'       && <GamesSection       lang={lang} games={gamesFull} refetch={refetchAll} flash={flash}/>}
           {section==='badges'      && <BadgesSection       lang={lang} items={achievementsFull} refetch={refetchAll} flash={flash}/>}
-          {section==='cosmetics'   && <CosmeticsSection    lang={lang} items={cosmeticsFull} refetch={refetchAll} flash={flash}/>}
-          {section==='coins'       && <CoinsSection         lang={lang} items={coinConfig} refetch={refetchAll} flash={flash}/>}
           {section==='tournaments' && <TournamentsSection  lang={lang} items={tournamentsFull} refetch={refetchAll} flash={flash}/>}
           {section==='challenges'  && <ChallengesSection   lang={lang} items={challengesFull} games={gamesFull} refetch={refetchAll} flash={flash}/>}
           {section==='season'      && <SeasonSection       lang={lang} activeSeason={activeSeason} refetch={refetchAll} flash={flash}/>}
@@ -2169,34 +1443,7 @@ function ContentTab({ lang }: { lang:Lang }) {
 // ── Content: Games ──────────────────────────────────────────────────────────
 
 function emptyGameForm(): GameFull {
-  return { id:'', name:'', name_ar:'', category:'work', target_screen:'workgame', icon_key:'', accent_color:'#9d6fff', tagline:'', tagline_ar:'', base_xp:50, tag:null, world:null, sort_order:0, is_active:true, is_featured:false, is_coming_soon:true, is_new:false, is_multiplayer:false, cover_image_url:null, thumbnail_image_url:null }
-}
-
-const GAME_CATEGORIES = ['work','card','board','puzzle','quick'] as const
-
-/** Center-crops+resizes an uploaded image file to a fixed landscape cover size and JPEG-compresses it, entirely client-side (same canvas-based approach as the profile header uploader, minus the interactive reposition UI — a straightforward center-crop is enough for admin-authored cover art). */
-function resizeImageToCoverBlob(file: File, targetW = 900, targetH = 600, quality = 0.86): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl)
-      const canvas = document.createElement('canvas')
-      canvas.width = targetW
-      canvas.height = targetH
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { reject(new Error('canvas unavailable')); return }
-      const srcRatio = img.width / img.height
-      const dstRatio = targetW / targetH
-      let sx = 0, sy = 0, sw = img.width, sh = img.height
-      if (srcRatio > dstRatio) { sw = img.height * dstRatio; sx = (img.width - sw) / 2 }
-      else { sh = img.width / dstRatio; sy = (img.height - sh) / 2 }
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH)
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/jpeg', quality)
-    }
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('image load failed')) }
-    img.src = objectUrl
-  })
+  return { id:'', name:'', name_ar:'', category:'work', target_screen:'workgame', icon_key:'', accent_color:'#9d6fff', tagline:'', tagline_ar:'', base_xp:50, tag:null, world:null, sort_order:0, is_active:true, is_featured:false, is_coming_soon:true }
 }
 
 function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFull[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
@@ -2204,7 +1451,6 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
   const [form, setForm] = useState<GameFull|null>(null)
   const [isNew, setIsNew] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [uploadingCover, setUploadingCover] = useState(false)
   const [del, setDel] = useState<GameFull|null>(null)
 
   const openNew = () => { setForm(emptyGameForm()); setIsNew(true) }
@@ -2217,7 +1463,7 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
     setBusy(true)
     const { error } = await adminUpsertGame({ ...form, id })
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setForm(null)
     await refetch()
     flash(isNew?(ar?'تم إنشاء اللعبة':'Game created'):(ar?'تم حفظ التعديلات':'Changes saved'))
@@ -2225,7 +1471,7 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
 
   const toggleActive = async (g:GameFull) => {
     const { error } = await adminSetGameActive(g.id, !g.is_active)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     if (g.is_active) flash(ar?'تم تعطيل اللعبة':'Game disabled','#ff4785')
     else flash(ar?'تم تفعيل اللعبة':'Game enabled')
@@ -2236,41 +1482,9 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
     setBusy(true)
     const { error } = await adminDeleteGame(del.id)
     setBusy(false); setDel(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم حذف اللعبة':'Game deleted','#ff4785')
-  }
-
-  // Move up/down within the visible list — same "swap + renumber sort_order
-  // by array position" pattern as the Branches tab's reorder().
-  const reorder = async (index:number, direction:-1|1) => {
-    const target = index + direction
-    if (target < 0 || target >= games.length) return
-    const next = [...games]
-    ;[next[index], next[target]] = [next[target], next[index]]
-    setBusy(true)
-    const { error } = await adminReorderGames(next.map(g=>g.id))
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await refetch()
-  }
-
-  const pickCover = async (gameId: string, file: File | undefined) => {
-    if (!file) return
-    if (!['image/jpeg','image/png','image/webp'].includes(file.type)) { flash(ar?'يجب أن تكون الصورة JPEG أو PNG أو WebP':'Image must be JPEG, PNG, or WebP','#ff4785'); return }
-    if (file.size > 5 * 1024 * 1024) { flash(ar?'الحد الأقصى لحجم الصورة 5MB':'Image must be under 5MB','#ff4785'); return }
-    setUploadingCover(true)
-    try {
-      const blob = await resizeImageToCoverBlob(file)
-      const { url, error } = await adminUploadGameCover(gameId, blob)
-      if (error || !url) { flash(describeAdminError(error ?? GENERIC_ADMIN_ERROR, ar),'#ff4785'); return }
-      setForm(f => f && ({ ...f, cover_image_url: url, thumbnail_image_url: url }))
-      flash(ar?'تم رفع الغلاف':'Cover uploaded')
-    } catch {
-      flash(ar?'تعذر معالجة الصورة':'Could not process the image','#ff4785')
-    } finally {
-      setUploadingCover(false)
-    }
   }
 
   return (
@@ -2279,33 +1493,22 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
 
       {games.length===0 && <Empty icon="🎮" title={ar?'لا توجد ألعاب بعد':'No games yet'} sub={ar?'المنصة جاهزة — أضف أول لعبة عندما تكون جاهزاً':'The platform is ready — add your first game whenever it exists'}/>}
 
-      {games.map((g,i)=>(
+      {games.map(g=>(
         <div key={g.id} style={{...S.card,display:'flex',gap:10,alignItems:'flex-start',opacity:g.is_active?1:0.55}}>
-          <div style={{width:52,height:38,borderRadius:8,flexShrink:0,overflow:'hidden',background:'rgba(var(--fg-rgb),0.06)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-            {g.cover_image_url ? <img src={g.cover_image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontSize:16,opacity:0.35}}>🎮</span>}
-          </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:4}}>
               <span style={{fontSize:14,fontWeight:700,color:'var(--foreground)'}}>{ar?g.name_ar:g.name}</span>
               <span style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{g.category}</span>
               {g.is_featured && <span style={{...S.pill,background:'rgba(255,215,0,0.12)',color:'#ffd700'}}>{ar?'مميزة':'Featured'}</span>}
-              {g.is_new && <span style={{...S.pill,background:'rgba(0,212,255,0.12)',color:'#00d4ff'}}>{ar?'جديدة':'New'}</span>}
-              {g.is_multiplayer && <span style={{...S.pill,background:'rgba(0,230,118,0.12)',color:'#00e676'}}>{ar?'متعدد اللاعبين':'Multiplayer'}</span>}
               {g.is_coming_soon && <span style={{...S.pill,background:'rgba(var(--fg-rgb),0.06)',color:'rgba(var(--fg2-rgb),0.5)'}}>{ar?'قريباً':'Coming Soon'}</span>}
               <span style={{...S.pill,background:g.is_active?'rgba(0,230,118,0.12)':'rgba(255,71,133,0.12)',color:g.is_active?'#00e676':'#ff4785'}}>{g.is_active?(ar?'مفعّلة':'Active'):(ar?'معطّلة':'Disabled')}</span>
             </div>
             <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{g.id} · {g.target_screen} · {g.base_xp} XP</div>
           </div>
-          <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0,alignItems:'flex-end'}}>
-            <div style={{display:'flex',gap:6}}>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>toggleActive(g)} title={g.is_active?'Disable':'Enable'}><IcoRefresh/></button>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>openEdit(g)}><IcoPencil/></button>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(g)}><IcoTrash/></button>
-            </div>
-            <div style={{display:'flex',gap:2}}>
-              <button style={{...S.ghost,padding:'4px 6px'}} disabled={busy||i===0} onClick={()=>reorder(i,-1)} title={ar?'تحريك لأعلى':'Move up'}><IcoUp/></button>
-              <button style={{...S.ghost,padding:'4px 6px'}} disabled={busy||i===games.length-1} onClick={()=>reorder(i,1)} title={ar?'تحريك لأسفل':'Move down'}><IcoDown2/></button>
-            </div>
+          <div style={{display:'flex',gap:6,flexShrink:0}}>
+            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>toggleActive(g)} title={g.is_active?'Disable':'Enable'}><IcoRefresh/></button>
+            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>openEdit(g)}><IcoPencil/></button>
+            <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(g)}><IcoTrash/></button>
           </div>
         </div>
       ))}
@@ -2317,21 +1520,6 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
             <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:18}}>{isNew?(ar?'لعبة جديدة':'New Game'):(ar?'تعديل اللعبة':'Edit Game')}</div>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
               <div>
-                <span style={S.label}>{ar?'صورة الغلاف':'Cover Artwork'}</span>
-                <div style={{display:'flex',alignItems:'center',gap:12}}>
-                  <div style={{width:96,height:64,borderRadius:10,overflow:'hidden',flexShrink:0,background:'rgba(var(--fg-rgb),0.06)',border:'1px solid rgba(var(--fg-rgb),0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
-                    {form.cover_image_url ? <img src={form.cover_image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontSize:22,opacity:0.3}}>🎮</span>}
-                  </div>
-                  <label style={{...S.ghost,cursor: isNew?'not-allowed':'pointer',fontSize:12,opacity:isNew?0.5:1}}>
-                    {uploadingCover ? (ar?'جارٍ الرفع…':'Uploading…') : (form.cover_image_url ? (ar?'استبدال':'Replace') : (ar?'رفع صورة':'Upload Image'))}
-                    <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:'none'}} disabled={isNew||uploadingCover}
-                      onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if(form) pickCover(form.id, file) }}/>
-                  </label>
-                </div>
-                {isNew && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginTop:6}}>{ar?'احفظ اللعبة أولاً، ثم عدّلها لرفع صورة الغلاف.':'Save the game first, then edit it to upload cover artwork.'}</div>}
-                {!form.cover_image_url && !isNew && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginTop:6}}>{ar?'بدون صورة، ستُعرض اللعبة بالرسم الافتراضي الحالي.':'Without an image, the game falls back to its existing built-in artwork.'}</div>}
-              </div>
-              <div>
                 <span style={S.label}>{ar?'المعرّف (id)':'ID (slug)'}</span>
                 <input style={S.input} placeholder="e.g. trivia_blitz" value={form.id} disabled={!isNew} onChange={e=>setForm(f=>f&&({...f,id:slugify(e.target.value)}))}/>
               </div>
@@ -2342,12 +1530,12 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
                 <div><span style={S.label}>{ar?'الفئة':'Category'}</span>
                   <select style={S.input} value={form.category} onChange={e=>setForm(f=>f&&({...f,category:e.target.value}))}>
-                    {GAME_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+                    <option value="work">work</option><option value="casual">casual</option>
                   </select>
                 </div>
                 <div><span style={S.label}>{ar?'شاشة اللعب':'Target Screen'}</span>
                   <select style={S.input} value={form.target_screen} onChange={e=>setForm(f=>f&&({...f,target_screen:e.target.value}))}>
-                    <option value="workgame">workgame</option><option value="casualgame">casualgame</option><option value="lobby">lobby</option>
+                    <option value="workgame">workgame</option><option value="casualgame">casualgame</option>
                   </select>
                 </div>
               </div>
@@ -2363,13 +1551,11 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
               <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>f&&({...f,is_active:e.target.checked}))}/>{ar?'مفعّلة':'Active'}</label>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_featured} onChange={e=>setForm(f=>f&&({...f,is_featured:e.target.checked}))}/>{ar?'مميزة':'Featured'}</label>
-                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_new} onChange={e=>setForm(f=>f&&({...f,is_new:e.target.checked}))}/>{ar?'جديدة':'New'}</label>
-                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_multiplayer} onChange={e=>setForm(f=>f&&({...f,is_multiplayer:e.target.checked}))}/>{ar?'متعدد اللاعبين':'Multiplayer'}</label>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_coming_soon} onChange={e=>setForm(f=>f&&({...f,is_coming_soon:e.target.checked}))}/>{ar?'قريباً':'Coming Soon'}</label>
               </div>
               <div style={{display:'flex',gap:8,paddingTop:4}}>
                 <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setForm(null)}>{ar?'إلغاء':'Cancel'}</button>
-                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy||uploadingCover} onClick={save}>{ar?'حفظ':'Save'}</button>
+                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={save}>{ar?'حفظ':'Save'}</button>
               </div>
             </div>
           </div>
@@ -2395,7 +1581,7 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
 // ── Content: Badges ─────────────────────────────────────────────────────────
 
 function emptyBadgeForm(): AchievementFull {
-  return { id:'', name:'', name_ar:'', description:'', description_ar:'', icon:'🏆', color:'#9d6fff', rarity:'common', category:'general', xp_reward:0, coin_reward:0, sort_order:0, unlock_criteria:{type:'manual'} }
+  return { id:'', name:'', name_ar:'', description:'', description_ar:'', icon:'🏆', color:'#9d6fff', rarity:'common', category:'general', xp_reward:0, sort_order:0, unlock_criteria:{type:'manual'} }
 }
 
 function BadgesSection({ lang, items, refetch, flash }: { lang:Lang; items:AchievementFull[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
@@ -2424,7 +1610,7 @@ function BadgesSection({ lang, items, refetch, flash }: { lang:Lang; items:Achie
     setBusy(true)
     const { error } = await adminUpsertAchievement({ ...form, id, unlock_criteria: criteria })
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setForm(null)
     await refetch()
     flash(isNew?(ar?'تم إنشاء الشارة':'Badge created'):(ar?'تم حفظ التعديلات':'Changes saved'))
@@ -2435,7 +1621,7 @@ function BadgesSection({ lang, items, refetch, flash }: { lang:Lang; items:Achie
     setBusy(true)
     const { error } = await adminDeleteAchievement(del.id)
     setBusy(false); setDel(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم حذف الشارة':'Badge deleted','#ff4785')
   }
@@ -2539,350 +1725,6 @@ function BadgesSection({ lang, items, refetch, flash }: { lang:Lang; items:Achie
   )
 }
 
-// ── Content: Cosmetics Shop ─────────────────────────────────────────────────
-// Every price, rarity, translation, availability flag, and seasonal window
-// for the Coins-only cosmetics shop lives in cosmetic_items and is editable
-// here — no code change or redeploy needed to rebalance the economy or run a
-// seasonal event. Purchases themselves never touch this table; they only
-// insert into user_cosmetic_unlocks via the purchase_cosmetic_item() RPC.
-
-function toLocalInput(iso: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n:number) => String(n).padStart(2,'0')
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function emptyCosmeticForm(): CosmeticItemFull {
-  return {
-    id:'', type:'frame', rarity:'common', label:'', label_ar:'', description:'', description_ar:'',
-    icon:'🎁', price_coins:1000, is_available:true, seasonal_start:null, seasonal_end:null,
-    sort_order:0, style:{}, unlock_criteria:{type:'purchase'},
-    media_type:'gradient', image_url:null, video_url:null, poster_url:null, is_animated:false,
-    slug:null, collection:null, thumbnail_url:null, is_featured:false, created_at:new Date().toISOString(),
-  } as CosmeticItemFull
-}
-
-function CosmeticsSection({ lang, items, refetch, flash }: { lang:Lang; items:CosmeticItemFull[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
-  const ar = lang === 'ar'
-  const [form, setForm] = useState<CosmeticItemFull|null>(null)
-  const [isNew, setIsNew] = useState(true)
-  const [busy, setBusy] = useState(false)
-  const [del, setDel] = useState<CosmeticItemFull|null>(null)
-  const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [collectionFilter, setCollectionFilter] = useState<string>('all')
-  const [uploading, setUploading] = useState<'video'|'poster'|'image'|'thumbnail'|null>(null)
-  // Collections are free text on the item itself (no enum/hardcoded list) —
-  // the filter chips here and in the player-facing shop are always derived
-  // from whatever values actually exist in the data, so adding a brand new
-  // collection is just typing a new name on an item, never a code change.
-  const knownCollections = Array.from(new Set(items.map(c=>c.collection).filter((v):v is string=>!!v))).sort()
-
-  const criteriaType = ((form?.unlock_criteria as any)?.type as string) || 'purchase'
-  const setCriteriaType = (t:string) => setForm(f => f && ({ ...f, unlock_criteria: { type: t }, price_coins: t==='purchase' ? (f.price_coins ?? 1000) : null }))
-
-  const openNew = () => { setForm(emptyCosmeticForm()); setIsNew(true) }
-  const openEdit = (c:CosmeticItemFull) => { setForm({...c}); setIsNew(false) }
-
-  const filtered = items
-    .filter(c => typeFilter==='all' || c.type===typeFilter)
-    .filter(c => collectionFilter==='all' || c.collection===collectionFilter)
-
-  // Client-side backstop for requirement (6): never let an item be saved as
-  // "animated" without a real, working video asset — the DB has the same
-  // constraint (cosmetic_items_animated_requires_video), but catching it
-  // here gives an actual explanation instead of a raw Postgres error.
-  const handleMediaUpload = async (kind: 'video'|'poster'|'image'|'thumbnail', file: File) => {
-    if (!form) return
-    setUploading(kind)
-    const id = isNew ? slugify(form.id || form.label) : form.id
-    const { url, error } = await adminUploadCosmeticMedia(id, kind, file)
-    setUploading(null)
-    if (error || !url) { flash(describeAdminError(error ?? 'Upload failed', ar),'#ff4785'); return }
-    const field = kind === 'video' ? 'video_url' : kind === 'poster' ? 'poster_url' : kind === 'thumbnail' ? 'thumbnail_url' : 'image_url'
-    setForm(f => f && ({ ...f, [field]: url }))
-    flash(ar?'تم رفع الملف':'File uploaded')
-  }
-
-  const save = async () => {
-    if (!form) return
-    const id = isNew ? slugify(form.id || form.label) : form.id
-    if (!id || !form.label.trim() || !form.label_ar.trim()) { flash(ar?'الاسم والمعرّف مطلوبان':'Name and ID are required','#ff4785'); return }
-    if (criteriaType==='purchase' && (!form.price_coins || form.price_coins <= 0)) { flash(ar?'سعر الكوينز مطلوب للعناصر القابلة للشراء':'Coin price is required for purchasable items','#ff4785'); return }
-    if (form.is_animated && (!form.video_url?.trim() || !form.poster_url?.trim())) {
-      flash(ar?'لا يمكن تمييز العنصر كـ"متحرك" بدون رابط فيديو وصورة احتياطية صالحين':'Cannot mark this item Animated without a valid video URL and poster image','#ff4785')
-      return
-    }
-    if (form.media_type === 'video' && !form.video_url?.trim()) {
-      flash(ar?'رابط الفيديو مطلوب لنوع الوسائط "فيديو"':'Video URL is required when media type is Video','#ff4785')
-      return
-    }
-    setBusy(true)
-    const { error } = await adminUpsertCosmeticItem({
-      ...form, id,
-      slug: form.slug?.trim() || id,
-      collection: form.collection?.trim() || null,
-      seasonal_start: form.seasonal_start ? new Date(form.seasonal_start).toISOString() : null,
-      seasonal_end: form.seasonal_end ? new Date(form.seasonal_end).toISOString() : null,
-    })
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setForm(null)
-    await refetch()
-    flash(isNew?(ar?'تم إنشاء العنصر':'Item created'):(ar?'تم حفظ التعديلات':'Changes saved'))
-  }
-
-  const toggleAvailable = async (c:CosmeticItemFull) => {
-    const { error } = await adminSetCosmeticAvailable(c.id, !c.is_available)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await refetch()
-    flash(c.is_available?(ar?'تم إخفاء العنصر من المتجر':'Item hidden from shop'):(ar?'تم إظهار العنصر في المتجر':'Item shown in shop'))
-  }
-
-  const remove = async () => {
-    if (!del) return
-    setBusy(true)
-    const { error } = await adminDeleteCosmeticItem(del.id)
-    setBusy(false); setDel(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    await refetch()
-    flash(ar?'تم حذف العنصر':'Item deleted','#ff4785')
-  }
-
-  return (
-    <div style={{display:'flex',flexDirection:'column',gap:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-        <button style={{...S.primary,alignSelf:'flex-start'}} onClick={openNew}>+ {ar?'عنصر جديد':'New Item'}</button>
-        <select style={{...S.input,width:'auto',flexShrink:0}} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
-          <option value="all">{ar?'كل الأنواع':'All types'}</option>
-          {COSMETIC_TYPES.map(t=><option key={t} value={t}>{ar?cosmeticTypeLabel[t].ar:cosmeticTypeLabel[t].en}</option>)}
-        </select>
-        {knownCollections.length > 0 && (
-          <select style={{...S.input,width:'auto',flexShrink:0}} value={collectionFilter} onChange={e=>setCollectionFilter(e.target.value)}>
-            <option value="all">{ar?'كل المجموعات':'All collections'}</option>
-            {knownCollections.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-        )}
-      </div>
-
-      {filtered.length===0 && <Empty icon="🎨" title={ar?'لا توجد عناصر':'No items yet'} sub={ar?'أضف أول عنصر في المتجر':'Add the first shop item'}/>}
-
-      {filtered.map(c=>(
-        <div key={c.id} style={{...S.card,display:'flex',gap:10,alignItems:'center',opacity:c.is_available?1:0.55}}>
-          <div style={{fontSize:22,flexShrink:0,width:32,textAlign:'center'}}>{c.icon}</div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:3}}>
-              <span style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>{ar?c.label_ar:c.label}</span>
-              <span style={{...S.pill,background:`${shopRarityColor[c.rarity]}20`,color:shopRarityColor[c.rarity]||'#9d6fff'}}>{c.rarity}</span>
-              <span style={{...S.pill,background:'rgba(157,111,255,0.1)',color:'#9d6fff'}}>{ar?cosmeticTypeLabel[c.type]?.ar:cosmeticTypeLabel[c.type]?.en ?? c.type}</span>
-              {c.collection && <span style={{...S.pill,background:'rgba(var(--fg-rgb),0.08)',color:'rgba(var(--fg2-rgb),0.7)'}}>{c.collection}</span>}
-              {c.is_featured && <span style={{...S.pill,background:'rgba(255,196,0,0.14)',color:'#ffc400'}}>{ar?'مميّز':'Featured'}</span>}
-              {!c.is_available && <span style={{...S.pill,background:'rgba(255,71,133,0.12)',color:'#ff4785'}}>{ar?'مخفي':'Hidden'}</span>}
-            </div>
-            <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>
-              {c.id} · {c.price_coins ? `${c.price_coins.toLocaleString()} 🪙` : (ar?'غير قابل للشراء':'not purchasable')}
-              {c.seasonal_start && ` · ${ar?'من':'from'} ${new Date(c.seasonal_start).toLocaleDateString()}`}
-              {c.seasonal_end && ` ${ar?'إلى':'to'} ${new Date(c.seasonal_end).toLocaleDateString()}`}
-            </div>
-          </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>toggleAvailable(c)} title={c.is_available?'Hide':'Show'}><IcoRefresh/></button>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>openEdit(c)}><IcoPencil/></button>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(c)}><IcoTrash/></button>
-          </div>
-        </div>
-      ))}
-
-      {form && (
-        <div style={S.sheet} onClick={e=>{if(e.target===e.currentTarget)setForm(null)}}>
-          <div style={{...S.sheetIn,maxHeight:'92dvh'}}>
-            <div style={S.handle}/>
-            <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:18}}>{isNew?(ar?'عنصر جديد':'New Item'):(ar?'تعديل العنصر':'Edit Item')}</div>
-            <div style={{display:'flex',flexDirection:'column',gap:12}}>
-              <div>
-                <span style={S.label}>{ar?'المعرّف (id)':'ID (slug)'}</span>
-                <input style={S.input} placeholder="e.g. frame_prism" value={form.id} disabled={!isNew} onChange={e=>setForm(f=>f&&({...f,id:slugify(e.target.value)}))}/>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'الاسم (En)':'Name (En)'}</span><input style={S.input} value={form.label} onChange={e=>setForm(f=>f&&({...f,label:e.target.value}))}/></div>
-                <div><span style={S.label}>{ar?'الاسم (Ar)':'Name (Ar)'}</span><input style={S.input} value={form.label_ar} onChange={e=>setForm(f=>f&&({...f,label_ar:e.target.value}))}/></div>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'الوصف (En)':'Description (En)'}</span><input style={S.input} value={form.description} onChange={e=>setForm(f=>f&&({...f,description:e.target.value}))}/></div>
-                <div><span style={S.label}>{ar?'الوصف (Ar)':'Description (Ar)'}</span><input style={S.input} value={form.description_ar} onChange={e=>setForm(f=>f&&({...f,description_ar:e.target.value}))}/></div>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'أيقونة (إيموجي)':'Icon (emoji)'}</span><input style={S.input} value={form.icon} onChange={e=>setForm(f=>f&&({...f,icon:e.target.value}))}/></div>
-                <div><span style={S.label}>{ar?'النوع':'Type'}</span>
-                  <select style={S.input} value={form.type} onChange={e=>setForm(f=>f&&({...f,type:e.target.value}))}>
-                    {COSMETIC_TYPES.map(t=><option key={t} value={t}>{ar?cosmeticTypeLabel[t].ar:cosmeticTypeLabel[t].en}</option>)}
-                  </select>
-                </div>
-                <div><span style={S.label}>{ar?'الندرة':'Rarity'}</span>
-                  <select style={S.input} value={form.rarity} onChange={e=>setForm(f=>f&&({...f,rarity:e.target.value}))}>
-                    {SHOP_RARITIES.map(r=><option key={r} value={r}>{r}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div>
-                  <span style={S.label}>{ar?'المجموعة (Collection)':'Collection'}</span>
-                  <input style={S.input} list="cosmetic-collections" placeholder={ar?'مثال: Bahrain':'e.g. Bahrain'} value={form.collection ?? ''} onChange={e=>setForm(f=>f&&({...f,collection:e.target.value || null}))}/>
-                  <datalist id="cosmetic-collections">
-                    {knownCollections.map(c=><option key={c} value={c}/>)}
-                  </datalist>
-                </div>
-                <div><span style={S.label}>{ar?'رابط الصورة المصغّرة (اختياري)':'Thumbnail URL (optional)'}</span>
-                  <div style={{display:'flex',gap:6}}>
-                    <input style={{...S.input,flex:1}} placeholder="https://..." value={form.thumbnail_url ?? ''} onChange={e=>setForm(f=>f&&({...f,thumbnail_url:e.target.value || null}))}/>
-                    <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
-                      {uploading==='thumbnail' ? '…' : (ar?'رفع':'Upload')}
-                      <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('thumbnail', f)}}/>
-                    </label>
-                  </div>
-                </div>
-              </div>
-              {(form.type === 'frame' || form.type === 'avatar_decoration') && (
-                <div style={{display:'flex',flexDirection:'column',gap:10,padding:12,borderRadius:10,background:'rgba(var(--fg-rgb),0.03)',border:'1px solid rgba(var(--fg-rgb),0.08)'}}>
-                  <span style={S.label}>{ar?'صورة الإطار (طبقة شفافة PNG)':'Frame Image (transparent PNG overlay)'}</span>
-                  <div style={{display:'flex',gap:6}}>
-                    <input style={{...S.input,flex:1}} placeholder="https://..." value={form.image_url ?? ''} onChange={e=>setForm(f=>f&&({...f,image_url:e.target.value || null}))}/>
-                    <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
-                      {uploading==='image' ? '…' : (ar?'رفع':'Upload')}
-                      <input type="file" accept="image/png,image/webp,image/svg+xml" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('image', f)}}/>
-                    </label>
-                  </div>
-                  {form.image_url && (
-                    <div style={{width:88,height:88,position:'relative',flexShrink:0}}>
-                      <Avatar url={null} alt={ar?form.label_ar||form.label:form.label||form.label_ar} size={72} frame={form}/>
-                    </div>
-                  )}
-                  <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.4)'}}>
-                    {ar?'إن لم يوجد رابط صورة، يُستخدم الحلقة اللونية الاحتياطية التقليدية.':'Falls back to the classic color-ring style when no image is set.'}
-                  </div>
-                </div>
-              )}
-              <div style={{display:'grid',gridTemplateColumns:criteriaType==='purchase'?'1fr 1fr':'1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'طريقة الحصول عليه':'Acquisition'}</span>
-                  <select style={S.input} value={criteriaType} onChange={e=>setCriteriaType(e.target.value)}>
-                    <option value="purchase">{ar?'شراء بالكوينز':'Purchase with Coins'}</option>
-                    <option value="default">{ar?'مجاني (افتراضي)':'Free (default)'}</option>
-                    <option value="season_pass">{ar?'بطاقة الموسم':'Season Pass'}</option>
-                  </select>
-                </div>
-                {criteriaType==='purchase' && (
-                  <div><span style={S.label}>{ar?'السعر (كوينز)':'Price (Coins)'}</span>
-                    <input style={S.input} type="number" min={1} value={form.price_coins ?? ''} onChange={e=>setForm(f=>f&&({...f,price_coins:parseInt(e.target.value)||0}))}/>
-                  </div>
-                )}
-              </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'متاح للبيع من (اختياري)':'Available from (optional)'}</span>
-                  <input style={S.input} type="datetime-local" value={toLocalInput(form.seasonal_start)} onChange={e=>setForm(f=>f&&({...f,seasonal_start:e.target.value?new Date(e.target.value).toISOString():null}))}/>
-                </div>
-                <div><span style={S.label}>{ar?'متاح للبيع حتى (اختياري)':'Available until (optional)'}</span>
-                  <input style={S.input} type="datetime-local" value={toLocalInput(form.seasonal_end)} onChange={e=>setForm(f=>f&&({...f,seasonal_end:e.target.value?new Date(e.target.value).toISOString():null}))}/>
-                </div>
-              </div>
-              {form.type === 'banner' && (
-                <div style={{display:'flex',flexDirection:'column',gap:10,padding:12,borderRadius:10,background:'rgba(var(--fg-rgb),0.03)',border:'1px solid rgba(var(--fg-rgb),0.08)'}}>
-                  <span style={S.label}>{ar?'نوع الوسائط (الخلفية)':'Media Type (Background)'}</span>
-                  <select
-                    style={S.input}
-                    value={form.media_type}
-                    onChange={e=>{
-                      const mt = e.target.value
-                      setForm(f=>f&&({...f, media_type:mt, is_animated: mt==='video' ? f.is_animated : false}))
-                    }}
-                  >
-                    <option value="gradient">{ar?'تدرج لوني (افتراضي)':'Gradient (default)'}</option>
-                    <option value="image">{ar?'صورة ثابتة':'Static Image'}</option>
-                    <option value="video">{ar?'فيديو متحرك':'Animated Video'}</option>
-                  </select>
-
-                  {form.media_type === 'image' && (
-                    <div>
-                      <span style={S.label}>{ar?'رابط الصورة':'Image URL'}</span>
-                      <input style={S.input} placeholder="https://..." value={form.image_url ?? ''} onChange={e=>setForm(f=>f&&({...f,image_url:e.target.value || null}))}/>
-                    </div>
-                  )}
-
-                  {form.media_type === 'video' && (
-                    <>
-                      <div>
-                        <span style={S.label}>{ar?'رابط الفيديو (mp4/webm)':'Video URL (mp4/webm)'}</span>
-                        <div style={{display:'flex',gap:6}}>
-                          <input style={{...S.input,flex:1}} placeholder="https://..." value={form.video_url ?? ''} onChange={e=>setForm(f=>f&&({...f,video_url:e.target.value || null}))}/>
-                          <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
-                            {uploading==='video' ? '…' : (ar?'رفع':'Upload')}
-                            <input type="file" accept="video/mp4,video/webm" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('video', f)}}/>
-                          </label>
-                        </div>
-                      </div>
-                      <div>
-                        <span style={S.label}>{ar?'الصورة الاحتياطية (poster)':'Poster Image (fallback)'}</span>
-                        <div style={{display:'flex',gap:6}}>
-                          <input style={{...S.input,flex:1}} placeholder="https://..." value={form.poster_url ?? ''} onChange={e=>setForm(f=>f&&({...f,poster_url:e.target.value || null}))}/>
-                          <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
-                            {uploading==='poster' ? '…' : (ar?'رفع':'Upload')}
-                            <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('poster', f)}}/>
-                          </label>
-                        </div>
-                      </div>
-                      <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}>
-                        <input type="checkbox" checked={form.is_animated} onChange={e=>setForm(f=>f&&({...f,is_animated:e.target.checked}))}/>
-                        {ar?'متحرك — يشغّل الفيديو فعلياً (يتطلب رابط فيديو + صورة احتياطية)':'Animated — actually plays the video (requires video URL + poster)'}
-                      </label>
-                      {/* Live preview — same component every equipped-banner surface in
-                          the app uses, so this is exactly what players will see. */}
-                      <div>
-                        <span style={S.label}>{ar?'معاينة حية':'Live Preview'}</span>
-                        <div style={{width:180,height:112,borderRadius:10,overflow:'hidden',position:'relative',border:'1px solid rgba(var(--fg-rgb),0.1)'}}>
-                          <CosmeticBannerLayer banner={form} fallbackGradient="linear-gradient(135deg,#0d0d28,#1a0a3d)" />
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-              <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
-                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}>
-                  <input type="checkbox" checked={form.is_available} onChange={e=>setForm(f=>f&&({...f,is_available:e.target.checked}))}/>
-                  {ar?'ظاهر في المتجر':'Visible in shop'}
-                </label>
-                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}>
-                  <input type="checkbox" checked={form.is_featured ?? false} onChange={e=>setForm(f=>f&&({...f,is_featured:e.target.checked}))}/>
-                  {ar?'مميّز (Featured)':'Featured'}
-                </label>
-              </div>
-              <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.35)',lineHeight:1.5}}>
-                {ar?'هذه العناصر تجميلية فقط — شراؤها لا يغيّر أبداً الخبرة أو المستوى أو الترتيب أو الإنجازات.':'These items are purely cosmetic — purchasing one never changes XP, level, rank, or achievements.'}
-              </div>
-              <div style={{display:'flex',gap:8,paddingTop:4}}>
-                <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setForm(null)}>{ar?'إلغاء':'Cancel'}</button>
-                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={save}>{ar?'حفظ':'Save'}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {del && (
-        <div style={S.dialog}>
-          <div style={{...S.dbox,border:'1px solid rgba(255,71,133,0.15)'}}>
-            <div style={{fontSize:15,fontWeight:700,color:'#ff4785',marginBottom:8}}>{ar?'تأكيد الحذف':'Confirm Delete'}</div>
-            <div style={{fontSize:13,color:'rgba(var(--fg2-rgb),0.55)',lineHeight:1.5,marginBottom:20}}>{ar?`سيتم حذف "${del.label_ar}" نهائياً.`:`"${del.label}" will be permanently deleted.`}</div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setDel(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.danger,flex:1,justifyContent:'center'}} onClick={remove}>{ar?'حذف':'Delete'}</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Content: Tournaments ────────────────────────────────────────────────────
 
 const TOURNAMENT_STATUSES = ['upcoming','registration_open','active','completed'] as const
@@ -2899,7 +1741,7 @@ function TournamentsSection({ lang, items, refetch, flash }: { lang:Lang; items:
     setBusy(true)
     const { error } = await adminCreateTournament(form.name, form.name_ar, form.qualification_rule, form.qualification_rule_ar, new Date(form.starts_at).toISOString(), new Date(form.ends_at).toISOString())
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setForm({name:'',name_ar:'',qualification_rule:'',qualification_rule_ar:'',starts_at:'',ends_at:''})
     setShowForm(false)
     await refetch()
@@ -2908,14 +1750,14 @@ function TournamentsSection({ lang, items, refetch, flash }: { lang:Lang; items:
 
   const setStatus = async (t:TournamentFull, status:string) => {
     const { error } = await adminUpdateTournament(t.id, { status })
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم تحديث الحالة':'Status updated')
   }
 
   const genBracket = async (t:TournamentFull) => {
     const { error } = await adminGenerateTournamentBracket(t.id)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم إنشاء شجرة البطولة':'Bracket generated')
   }
@@ -2925,7 +1767,7 @@ function TournamentsSection({ lang, items, refetch, flash }: { lang:Lang; items:
     setBusy(true)
     const { error } = await adminDeleteTournament(del.id)
     setBusy(false); setDel(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم حذف البطولة':'Tournament deleted','#ff4785')
   }
@@ -3000,109 +1842,22 @@ function TournamentsSection({ lang, items, refetch, flash }: { lang:Lang; items:
 
 // ── Content: Challenges ─────────────────────────────────────────────────────
 
-// ── Content: Coins Economy ───────────────────────────────────────────────────
-// Every Coin amount awarded anywhere in the game (Solo, Multiplayer,
-// Tournaments, daily rewards) lives in coin_reward_config as a single
-// key→amount catalog, edited here through admin_set_coin_reward() — the same
-// server-validated, auditable write path used for every other admin table.
-// This is also where the owner enforces "Solo stays the lowest tier" by
-// eye — the list is sorted by amount so the hierarchy is visible at a glance.
-
-const COIN_KEY_LABELS: Record<string,{en:string;ar:string}> = {
-  practice_completed:    { en:'Solo / Practice completed', ar:'إكمال التدريب الفردي' },
-  match_played:          { en:'Multiplayer match played',  ar:'مباراة جماعية ملعوبة' },
-  match_win_1st:         { en:'Multiplayer — 1st place bonus', ar:'مكافأة المركز الأول' },
-  match_win_2nd:         { en:'Multiplayer — 2nd place bonus', ar:'مكافأة المركز الثاني' },
-  match_win_3rd:         { en:'Multiplayer — 3rd place bonus', ar:'مكافأة المركز الثالث' },
-  tournament_match_played:{ en:'Tournament match played',  ar:'مباراة بطولة ملعوبة' },
-  tournament_match_win:  { en:'Tournament match won',       ar:'فوز في مباراة بطولة' },
-}
-
-function CoinsSection({ lang, items, refetch, flash }: { lang:Lang; items:CoinRewardConfig[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
-  const ar = lang === 'ar'
-  const [drafts, setDrafts] = useState<Record<string, number>>({})
-  const [busyKey, setBusyKey] = useState<string|null>(null)
-
-  const sorted = [...items].sort((a,b) => a.amount - b.amount)
-  const valueFor = (k:string, fallback:number) => drafts[k] ?? fallback
-
-  const save = async (key: string, fallback: number) => {
-    const amount = valueFor(key, fallback)
-    setBusyKey(key)
-    const { error } = await adminSetCoinReward(key, amount)
-    setBusyKey(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setDrafts(d => { const n = {...d}; delete n[key]; return n })
-    await refetch()
-    flash(ar?'تم تحديث المكافأة':'Reward updated')
-  }
-
-  return (
-    <div style={{display:'flex',flexDirection:'column',gap:12}}>
-      <div style={{fontSize:12,color:'rgba(var(--fg2-rgb),0.5)',lineHeight:1.5,padding:'0 2px'}}>
-        {ar
-          ? 'يجب أن يبقى الوضع الفردي أقل مصدر للكوينز؛ يجب أن تظل الجماعية والبطولات دائمًا الأعلى.'
-          : 'Solo should stay the lowest Coin source — Multiplayer and Tournaments should always sit highest.'}
-      </div>
-
-      {items.length===0 && <Empty icon="🪙" title={ar?'لا توجد إعدادات':'No reward config'} sub={ar?'لم يتم تحميل جدول المكافآت':'Coin reward table not loaded'}/>}
-
-      {sorted.map(item => {
-        const meta = COIN_KEY_LABELS[item.key]
-        const label = meta ? (ar?meta.ar:meta.en) : (ar?item.label_ar:item.label) || item.key
-        const dirty = drafts[item.key] !== undefined && drafts[item.key] !== item.amount
-        return (
-          <div key={item.key} style={S.card}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:'var(--foreground)'}}>{label}</div>
-                <div style={{fontSize:10.5,color:'rgba(var(--fg2-rgb),0.4)',marginTop:2,fontFamily:'monospace'}}>{item.key}</div>
-              </div>
-              <input
-                style={{...S.input,width:90,textAlign:'center'}}
-                type="number" min={0}
-                value={valueFor(item.key, item.amount)}
-                onChange={e=>setDrafts(d=>({...d,[item.key]:Math.max(0,parseInt(e.target.value)||0)}))}
-              />
-              <button
-                style={{...S.primary,opacity:dirty?1:0.4,cursor:dirty?'pointer':'default'}}
-                disabled={!dirty || busyKey===item.key}
-                onClick={()=>save(item.key, item.amount)}
-              >
-                {ar?'حفظ':'Save'}
-              </button>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 const CHALLENGE_PERIODS = ['daily','weekly','monthly','seasonal'] as const
 
 function ChallengesSection({ lang, items, games, refetch, flash }: { lang:Lang; items:ChallengeFull[]; games:GameFull[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
   const ar = lang === 'ar'
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({period_type:'weekly' as typeof CHALLENGE_PERIODS[number],title:'',title_ar:'',game_id:'',question_count:10,starts_at:'',ends_at:'',xp_reward:100,coin_reward:30})
+  const [form, setForm] = useState({period_type:'weekly' as typeof CHALLENGE_PERIODS[number],title:'',title_ar:'',game_id:'',question_count:10,starts_at:'',ends_at:''})
   const [busy, setBusy] = useState(false)
   const [del, setDel] = useState<ChallengeFull|null>(null)
-  const [editRewards, setEditRewards] = useState<ChallengeFull|null>(null)
-  const [rewardDraft, setRewardDraft] = useState({xp_reward:0, coin_reward:0})
-
-  // Defaults follow the same period-type tiers the DB uses when a challenge
-  // is created without explicit amounts, so the form starts sensible.
-  const REWARD_DEFAULTS: Record<typeof CHALLENGE_PERIODS[number], {xp:number; coin:number}> = {
-    daily: {xp:30, coin:15}, weekly: {xp:100, coin:30}, monthly: {xp:250, coin:60}, seasonal: {xp:400, coin:100},
-  }
 
   const create = async () => {
     if (!form.title.trim()||!form.title_ar.trim()||!form.starts_at||!form.ends_at) { flash(ar?'الحقول المطلوبة ناقصة':'Required fields missing','#ff4785'); return }
     setBusy(true)
-    const { error } = await adminCreateChallenge(form.period_type, form.title, form.title_ar, form.game_id||null, form.question_count, new Date(form.starts_at).toISOString(), new Date(form.ends_at).toISOString(), form.xp_reward, form.coin_reward)
+    const { error } = await adminCreateChallenge(form.period_type, form.title, form.title_ar, form.game_id||null, form.question_count, new Date(form.starts_at).toISOString(), new Date(form.ends_at).toISOString())
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setForm({period_type:'weekly',title:'',title_ar:'',game_id:'',question_count:10,starts_at:'',ends_at:'',xp_reward:100,coin_reward:30})
+    if (error) { flash(error,'#ff4785'); return }
+    setForm({period_type:'weekly',title:'',title_ar:'',game_id:'',question_count:10,starts_at:'',ends_at:''})
     setShowForm(false)
     await refetch()
     flash(ar?'تم إنشاء التحدي':'Challenge created')
@@ -3113,20 +1868,9 @@ function ChallengesSection({ lang, items, games, refetch, flash }: { lang:Lang; 
     setBusy(true)
     const { error } = await adminDeleteChallenge(del.id)
     setBusy(false); setDel(null)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     await refetch()
     flash(ar?'تم حذف التحدي':'Challenge deleted','#ff4785')
-  }
-
-  const saveRewards = async () => {
-    if (!editRewards) return
-    setBusy(true)
-    const { error } = await adminUpdateChallengeRewards(editRewards.id, rewardDraft.xp_reward, rewardDraft.coin_reward)
-    setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
-    setEditRewards(null)
-    await refetch()
-    flash(ar?'تم تحديث المكافآت':'Rewards updated')
   }
 
   const gameName = (id:string|null) => id ? (games.find(g=>g.id===id) ? (ar?games.find(g=>g.id===id)!.name_ar:games.find(g=>g.id===id)!.name) : id) : (ar?'أي لعبة':'Any game')
@@ -3148,14 +1892,7 @@ function ChallengesSection({ lang, items, games, refetch, flash }: { lang:Lang; 
               <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{gameName(c.game_id)} · {c.question_count} {ar?'أسئلة':'questions'}</div>
               <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginTop:2}}>{new Date(c.starts_at).toLocaleString()} → {new Date(c.ends_at).toLocaleString()}</div>
             </div>
-            <div style={{display:'flex',gap:4,flexShrink:0}}>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'#9d6fff',padding:4,display:'flex'}} onClick={()=>{setEditRewards(c); setRewardDraft({xp_reward:c.xp_reward, coin_reward:c.coin_reward})}}><IcoPencil/></button>
-              <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(c)}><IcoTrash/></button>
-            </div>
-          </div>
-          <div style={{display:'flex',gap:6,marginTop:6}}>
-            <span style={{...S.pill,background:'rgba(255,215,0,0.12)',color:'#ffd700'}}>+{c.xp_reward} XP</span>
-            <span style={{...S.pill,background:'rgba(255,193,7,0.12)',color:'#ffc107'}}>+{c.coin_reward} {ar?'كوينز':'Coins'}</span>
+            <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex',flexShrink:0}} onClick={()=>setDel(c)}><IcoTrash/></button>
           </div>
         </div>
       ))}
@@ -3167,10 +1904,7 @@ function ChallengesSection({ lang, items, games, refetch, flash }: { lang:Lang; 
             <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:18}}>{ar?'تحدٍ جديد':'New Challenge'}</div>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
               <div><span style={S.label}>{ar?'النوع':'Period'}</span>
-                <select style={S.input} value={form.period_type} onChange={e=>{
-                  const p = e.target.value as typeof CHALLENGE_PERIODS[number]
-                  setForm(f=>({...f,period_type:p,xp_reward:REWARD_DEFAULTS[p].xp,coin_reward:REWARD_DEFAULTS[p].coin}))
-                }}>
+                <select style={S.input} value={form.period_type} onChange={e=>setForm(f=>({...f,period_type:e.target.value as typeof CHALLENGE_PERIODS[number]}))}>
                   {CHALLENGE_PERIODS.map(p=><option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
@@ -3191,30 +1925,10 @@ function ChallengesSection({ lang, items, games, refetch, flash }: { lang:Lang; 
                 <div><span style={S.label}>{ar?'يبدأ':'Starts At'}</span><input style={S.input} type="datetime-local" value={form.starts_at} onChange={e=>setForm(f=>({...f,starts_at:e.target.value}))}/></div>
                 <div><span style={S.label}>{ar?'ينتهي':'Ends At'}</span><input style={S.input} type="datetime-local" value={form.ends_at} onChange={e=>setForm(f=>({...f,ends_at:e.target.value}))}/></div>
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-                <div><span style={S.label}>{ar?'مكافأة XP':'XP Reward'}</span><input style={S.input} type="number" min={0} value={form.xp_reward} onChange={e=>setForm(f=>({...f,xp_reward:Math.max(0,parseInt(e.target.value)||0)}))}/></div>
-                <div><span style={S.label}>{ar?'مكافأة الكوينز':'Coin Reward'}</span><input style={S.input} type="number" min={0} value={form.coin_reward} onChange={e=>setForm(f=>({...f,coin_reward:Math.max(0,parseInt(e.target.value)||0)}))}/></div>
-              </div>
               <div style={{display:'flex',gap:8,paddingTop:4}}>
                 <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setShowForm(false)}>{ar?'إلغاء':'Cancel'}</button>
                 <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={create}>{ar?'إنشاء':'Create'}</button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {editRewards && (
-        <div style={S.dialog}>
-          <div style={S.dbox}>
-            <div style={{fontSize:15,fontWeight:700,color:'var(--foreground)',marginBottom:12}}>{ar?'تعديل المكافآت':'Edit Rewards'}</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
-              <div><span style={S.label}>{ar?'مكافأة XP':'XP Reward'}</span><input style={S.input} type="number" min={0} value={rewardDraft.xp_reward} onChange={e=>setRewardDraft(d=>({...d,xp_reward:Math.max(0,parseInt(e.target.value)||0)}))}/></div>
-              <div><span style={S.label}>{ar?'مكافأة الكوينز':'Coin Reward'}</span><input style={S.input} type="number" min={0} value={rewardDraft.coin_reward} onChange={e=>setRewardDraft(d=>({...d,coin_reward:Math.max(0,parseInt(e.target.value)||0)}))}/></div>
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setEditRewards(null)}>{ar?'إلغاء':'Cancel'}</button>
-              <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={saveRewards}>{ar?'حفظ':'Save'}</button>
             </div>
           </div>
         </div>
@@ -3249,7 +1963,7 @@ function SeasonSection({ lang, activeSeason, refetch, flash }: { lang:Lang; acti
     setBusy(true)
     const { error } = await adminEndSeasonAndStartNew(form.name, form.name_ar, new Date(form.starts_at).toISOString(), new Date(form.ends_at).toISOString())
     setBusy(false)
-    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    if (error) { flash(error,'#ff4785'); return }
     setForm({name:'',name_ar:'',starts_at:'',ends_at:''})
     setShowForm(false)
     await refetch()
@@ -3379,76 +2093,6 @@ function LogTab({ lang, loading, log }: { lang:Lang; loading:boolean; log:AdminL
   )
 }
 
-// TEMPORARY, owner-only diagnostics viewer — see src/lib/diagnostics.ts.
-// Was previously a floating 🐞 button + full-screen overlay shown on every
-// page for owner accounts; that was flagged as unacceptable production UI
-// (visible on all normal screens, not hidden by default) and has been
-// removed from App.tsx entirely. This is its replacement: a plain tab here
-// in Admin Dashboard, only ever visible to someone who already navigated
-// here (owner-only route) and clicked this specific tab — nothing floats
-// or overlays outside of it. Every diagLog(...) call across the app
-// (presence heartbeat, match-room/board-game RPCs, realtime channel
-// status) still feeds the same in-memory ring buffer regardless of whether
-// this tab is ever opened; this is just a read-only viewer into it.
-function DiagnosticsTab({ lang }: { lang: Lang }) {
-  const ar = lang === 'ar'
-  const [entries, setEntries] = useState<DiagEntry[]>(getDiagEntries())
-  const [filter, setFilter] = useState('')
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => subscribeDiag(setEntries), [])
-
-  const filtered = filter.trim()
-    ? entries.filter(e => `${e.scope} ${e.message}`.toLowerCase().includes(filter.trim().toLowerCase()))
-    : entries
-
-  const copyAll = () => {
-    const text = filtered
-      .map(e => `${new Date(e.at).toISOString()} [${e.scope}] ${e.message}${e.data !== undefined ? ' ' + JSON.stringify(e.data) : ''}`)
-      .join('\n')
-    navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {})
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ fontSize: 11.5, color: 'rgba(var(--fg2-rgb),0.45)', lineHeight: 1.5 }}>
-        {ar
-          ? 'سجل تشخيصي مؤقت في الذاكرة فقط — الحضور، غرف اللعب الجماعي، وحالة القنوات المباشرة. غير مرئي لأي مستخدم آخر.'
-          : 'Temporary, in-memory diagnostics — presence, multiplayer rooms, and realtime channel status. Never visible to any non-owner account.'}
-      </div>
-
-      <div style={{ position: 'relative' }}>
-        <span style={{ position: 'absolute', top: '50%', transform: 'translateY(-50%)', left: 11, color: 'rgba(var(--fg2-rgb),0.4)', pointerEvents: 'none', display: 'flex' }}><IcoSearch/></span>
-        <input style={{ ...S.input, paddingLeft: 32 }} placeholder={ar ? 'تصفية (مثال: presence, room, ready, realtime)' : 'Filter (e.g. presence, room, ready, realtime)'} value={filter} onChange={e => setFilter(e.target.value)} />
-      </div>
-
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button style={{ ...S.ghost, fontSize: 12 }} onClick={copyAll}>{copied ? (ar ? 'تم النسخ!' : 'Copied!') : (ar ? 'نسخ الكل' : 'Copy All')}</button>
-        <button style={{ ...S.ghost, fontSize: 12 }} onClick={clearDiagEntries}>{ar ? 'مسح' : 'Clear'}</button>
-        <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', alignSelf: 'center' }}>{filtered.length}/{entries.length}</div>
-      </div>
-
-      {filtered.length === 0 && <Empty icon="🐞" title={ar ? 'لا سجلات بعد' : 'No log entries yet'} sub={ar ? 'ابدأ استخدام الغرف/الدردشة/الحضور من أي جهاز' : 'Start using rooms/chat/presence from any device'} />}
-
-      {filtered.map(e => (
-        <div key={e.id} style={{ ...S.card, padding: '10px 12px' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 }}>
-            <span style={{ fontSize: 10, color: 'rgba(var(--fg2-rgb),0.35)', fontFamily: "'JetBrains Mono',monospace", flexShrink: 0 }}>{new Date(e.at).toLocaleTimeString()}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: '#67e8f9' }}>[{e.scope}]</span>
-          </div>
-          <div style={{ fontSize: 12, color: /fail|error|denied|forbidden/i.test(e.message) ? '#ff4757' : 'var(--foreground)' }}>{e.message}</div>
-          {e.data !== undefined && (
-            <pre style={{ margin: '4px 0 0', fontSize: 10.5, color: 'rgba(var(--fg2-rgb),0.55)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: "'JetBrains Mono',monospace" }}>
-              {typeof e.data === 'string' ? e.data : JSON.stringify(e.data)}
-            </pre>
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 // ── Root ──────────────────────────────────────────────────────────────────────
 
 export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEmail }: Props) {
@@ -3506,7 +2150,7 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
       setRawCodes(codesRes)
       setAnnouncements(announcementsRes.map(toDisplayAnnouncement))
       setLog(logRes.map(toDisplayLog))
-      setAchievements((achievementsRes as any[]).map((a) => ({ id: a.id, name: a.name, nameAr: a.name_ar })))
+      setAchievements(achievementsRes as Achievement[])
       setLoading(false)
     }
     loadAll()
@@ -3517,32 +2161,27 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
     {key:'overview',      en:'Overview', ar:'نظرة عامة',  Icon:IcoGrid},
     {key:'users',         en:'Users',    ar:'المستخدمون', Icon:IcoUsers},
     {key:'codes',         en:'Codes',    ar:'الأكواد',    Icon:IcoKey},
-    {key:'branches',      en:'Branch Management', ar:'إدارة الفروع', Icon:IcoBranch},
     {key:'games',         en:'Analytics',ar:'التحليلات',  Icon:IcoBar},
     {key:'content',       en:'Content',  ar:'المحتوى',    Icon:IcoLayers},
     {key:'announcements', en:'Announce', ar:'الإعلانات',  Icon:IcoMega},
     {key:'log',           en:'Log',      ar:'السجل',      Icon:IcoLog},
-    {key:'diagnostics',   en:'Diagnostics', ar:'التشخيص', Icon:IcoBug},
   ]
 
   return (
-    <div style={{minHeight:'100dvh',background:'var(--background)',color:'var(--foreground)',display:'flex',flexDirection:'column'}}>
+    <div style={{minHeight:'100dvh',background:'#03030f',color:'var(--foreground)',display:'flex',flexDirection:'column'}}>
       <style>{`
         @keyframes skeleton-pulse { 0%,100%{opacity:0.5} 50%{opacity:1} }
         @keyframes toast-in { from{opacity:0;transform:translate(-50%,8px)} to{opacity:1;transform:translate(-50%,0)} }
       `}</style>
 
-      {/* Top bar — was hardcoded '14px 16px 10px' with zero safe-area
-          handling, same unsafe pattern as the pre-fix Profile screen: on a
-          notched/Dynamic-Island phone the back button, "Admin Dashboard"
-          title and language toggle could all sit under the status bar. */}
-      <div style={{padding:'14px 16px 10px',paddingTop:safeTop(14),paddingLeft:safeLeft(16),paddingRight:safeRight(16),background:'rgba(255,71,133,0.05)',borderBottom:'1px solid rgba(255,71,133,0.12)',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
-        <button onClick={()=>onNavigate('profile')} style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.55)',padding:4,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:6,...tapTarget(28,28)}}><IcoBack/></button>
+      {/* Top bar */}
+      <div style={{padding:'14px 16px 10px',background:'rgba(255,71,133,0.05)',borderBottom:'1px solid rgba(255,71,133,0.12)',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+        <button onClick={()=>onNavigate('profile')} style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.55)',padding:4,display:'flex',borderRadius:6}}><IcoBack/></button>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:14,fontWeight:800,color:'#ff4785',fontFamily:"'Exo 2',sans-serif",letterSpacing:0.5}}>{ar?'لوحة الإدارة':'Admin Dashboard'}</div>
           <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{userEmail}</div>
         </div>
-        <button onClick={()=>setLang(lang==='en'?'ar':'en')} style={{background:'rgba(var(--fg-rgb),0.05)',border:'1px solid rgba(var(--fg-rgb),0.1)',borderRadius:6,padding:'5px 9px',color:'rgba(var(--fg2-rgb),0.6)',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0,display:'inline-flex',alignItems:'center',justifyContent:'center',...tapTargetMinHeight(24)}}>
+        <button onClick={()=>setLang(lang==='en'?'ar':'en')} style={{background:'rgba(var(--fg-rgb),0.05)',border:'1px solid rgba(var(--fg-rgb),0.1)',borderRadius:6,padding:'5px 9px',color:'rgba(var(--fg2-rgb),0.6)',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0}}>
           {lang==='en'?'ع':'EN'}
         </button>
       </div>
@@ -3566,14 +2205,12 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
       {/* Content */}
       <div style={{flex:1,overflowY:'auto',padding:'16px 16px 40px'}}>
         {tab==='overview'      && <OverviewTab      lang={lang} loading={loading} users={users} games={games} stats={stats} dau={dau}/>}
-        {tab==='users'         && <UsersTab         lang={lang} loading={loading} users={users} achievements={achievements} games={games} refetchUsers={refetchUsers} refetchLog={refetchLog}/>}
+        {tab==='users'         && <UsersTab         lang={lang} loading={loading} users={users} achievements={achievements} refetchUsers={refetchUsers} refetchLog={refetchLog}/>}
         {tab==='codes'         && <CodesTab         lang={lang} loading={loading} codes={codes} refetchCodes={refetchCodes} refetchLog={refetchLog} userEmail={userEmail}/>}
-        {tab==='branches'      && <BranchesTab      lang={lang} refetchLog={refetchLog}/>}
         {tab==='games'         && <GamesTab         lang={lang} loading={loading} games={games} wau={wau} mau={mau}/>}
         {tab==='content'       && <ContentTab       lang={lang}/>}
         {tab==='announcements' && <AnnouncementsTab lang={lang} loading={loading} items={announcements} refetchAnnouncements={refetchAnnouncements} refetchLog={refetchLog}/>}
         {tab==='log'           && <LogTab           lang={lang} loading={loading} log={log}/>}
-        {tab==='diagnostics'   && <DiagnosticsTab   lang={lang}/>}
       </div>
     </div>
   )

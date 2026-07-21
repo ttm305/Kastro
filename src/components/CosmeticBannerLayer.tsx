@@ -34,14 +34,31 @@ const FILL: React.CSSProperties = {
  *
  * If the video fails to load/decode, it falls back to poster_url (or the
  * gradient if there's no poster) instead of leaving a broken/blank area.
+ *
+ * Respects `prefers-reduced-motion: reduce` — when set, the video never
+ * plays at all (not even a single autoplay frame) and the static poster
+ * image is shown instead, same as a load failure. Tracked live via a
+ * matchMedia listener so toggling the OS setting while the app is open
+ * takes effect immediately, no reload required.
  */
 export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props) {
   const [videoFailed, setVideoFailed] = useState(false)
+  const [reducedMotion, setReducedMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
+  )
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const isIntersectingRef = useRef(true)
 
-  const canPlayVideo = !!(banner?.is_animated && banner.video_url && banner.poster_url && !videoFailed)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const onChange = () => setReducedMotion(mq.matches)
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
+
+  const canPlayVideo = !!(banner?.is_animated && banner.video_url && banner.poster_url && !videoFailed && !reducedMotion)
 
   // Reset the failure flag whenever the equipped banner changes (e.g. the
   // player equips a different animated item) so a previous failure doesn't

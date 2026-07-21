@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import { useAuth } from '../lib/auth'
 import { getShopCatalog, purchaseCosmeticItem, getWeeklyCoinsEarned, equipCosmetic, type ShopItem, type EquipSlot } from '../lib/api'
 import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
+import Avatar from '../components/Avatar'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -17,8 +18,17 @@ interface Props {
 
 type Rarity = 'common' | 'rare' | 'epic' | 'legendary' | 'mythic'
 type CategoryKey = 'all' | 'badge_collectible' | 'trophy' | 'frame' | 'title' | 'banner' | 'avatar_decoration' | 'victory_animation' | 'emote' | 'seasonal'
+type SortKey = 'default' | 'price_asc' | 'price_desc' | 'rarity' | 'newest'
 
 const RARITY_ORDER: Rarity[] = ['common', 'rare', 'epic', 'legendary', 'mythic']
+
+const SORT_META: { key: SortKey; en: string; ar: string }[] = [
+  { key: 'default',    en: 'Featured',    ar: 'مميّز' },
+  { key: 'newest',     en: 'Newest',      ar: 'الأحدث' },
+  { key: 'price_asc',  en: 'Price: Low',  ar: 'السعر: الأقل' },
+  { key: 'price_desc', en: 'Price: High', ar: 'السعر: الأعلى' },
+  { key: 'rarity',     en: 'Rarity',      ar: 'الندرة' },
+]
 
 const RARITY_META: Record<Rarity, { en: string; ar: string; color: string; glow: string }> = {
   common:    { en: 'Common',    ar: 'عادي',        color: '#9ca3af', glow: 'rgba(156,163,175,0.25)' },
@@ -61,16 +71,20 @@ function Toast({ msg, visible, color = '#00e676' }: { msg: string; visible: bool
   )
 }
 
-function ItemPreviewVisual({ item, size = 88 }: { item: ShopItem; size?: number }) {
+function ItemPreviewVisual({ item, size = 88, avatarUrl }: { item: ShopItem; size?: number; avatarUrl?: string | null }) {
   // Frame ring/glow and banner gradient-keyword translation now live in
   // src/lib/cosmetics.ts — the single source of truth every screen that
   // renders an equipped cosmetic shares, so the shop preview always matches
   // what actually shows up equipped elsewhere in the app.
   if (item.type === 'frame') {
-    // Shop preview uses a 4px ring (vs. 3px everywhere a frame is actually
-    // equipped on a real avatar) purely for preview-tile legibility at this
-    // size, so it reads the same {ring, glow} fields cosmetics.ts does
-    // rather than calling frameAvatarStyle() directly.
+    // Real layered frame artwork (image_url set): composite it over the
+    // player's actual avatar via the shared Avatar component — the same
+    // frame overlay that shows up everywhere the frame is actually equipped.
+    if (item.image_url) {
+      return <Avatar url={avatarUrl} alt={item.label} size={size} frame={item} />
+    }
+    // Legacy items with no overlay artwork yet: the color-ring fallback,
+    // reading the same {ring, glow} fields cosmetics.ts does.
     const style = (item.style as any) ?? {}
     const ring = style.ring ?? RARITY_META[item.rarity as Rarity]?.color ?? '#9d6fff'
     return (
@@ -103,6 +117,10 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
   const { profile, refreshProfile } = useAuth()
   const [category, setCategory] = useState<CategoryKey>('all')
   const [rarity, setRarity] = useState<'all' | Rarity>('all')
+  const [collection, setCollection] = useState<string>('all')
+  const [sort, setSort] = useState<SortKey>('default')
+  const [animatedOnly, setAnimatedOnly] = useState(false)
+  const [ownedOnly, setOwnedOnly] = useState(false)
   const [items, setItems] = useState<ShopItem[]>([])
   const [loading, setLoading] = useState(true)
   const [weeklyCoins, setWeeklyCoins] = useState(0)
@@ -140,7 +158,33 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
     if (fresh) setPreview(fresh)
   }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filtered = items.filter((i) => (category === 'all' || i.type === category) && (rarity === 'all' || i.rarity === rarity))
+  // Collection chips are never hardcoded — they're derived from whatever
+  // `collection` values actually exist on the items returned by the shop
+  // catalog, so a brand-new collection just appears here the moment an
+  // admin adds items tagged with it, with zero code changes.
+  const knownCollections = useMemo(
+    () => Array.from(new Set(items.map((i) => i.collection).filter((v): v is string => !!v))).sort(),
+    [items],
+  )
+
+  const filtered = useMemo(() => {
+    const base = items.filter((i) =>
+      (category === 'all' || i.type === category) &&
+      (rarity === 'all' || i.rarity === rarity) &&
+      (collection === 'all' || i.collection === collection) &&
+      (!animatedOnly || i.is_animated) &&
+      (!ownedOnly || i.owned)
+    )
+    const sorted = [...base]
+    switch (sort) {
+      case 'price_asc': sorted.sort((a, b) => (a.price_coins ?? 0) - (b.price_coins ?? 0)); break
+      case 'price_desc': sorted.sort((a, b) => (b.price_coins ?? 0) - (a.price_coins ?? 0)); break
+      case 'rarity': sorted.sort((a, b) => RARITY_ORDER.indexOf(a.rarity as Rarity) - RARITY_ORDER.indexOf(b.rarity as Rarity)); break
+      case 'newest': sorted.sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()); break
+      default: sorted.sort((a, b) => (b.is_featured ? 1 : 0) - (a.is_featured ? 1 : 0) || (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    }
+    return sorted
+  }, [items, category, rarity, collection, animatedOnly, ownedOnly, sort])
 
   const closePreview = () => { setPreview(null); setConfirming(false) }
 
@@ -257,6 +301,53 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
           ))}
         </div>
 
+        {/* Collection filter — derived entirely from the data, never hardcoded */}
+        {knownCollections.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none' }}>
+            <button
+              onClick={() => setCollection('all')}
+              style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${collection === 'all' ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: collection === 'all' ? 'rgba(157,111,255,0.15)' : 'transparent', color: collection === 'all' ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.45)' }}
+            >
+              {isAr ? 'كل المجموعات' : 'All collections'}
+            </button>
+            {knownCollections.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCollection(c)}
+                style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${collection === c ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: collection === c ? 'rgba(157,111,255,0.15)' : 'transparent', color: collection === c ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.45)' }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Sort + quick toggles + total count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(var(--fg-rgb),0.1)', background: 'var(--surface-2)', color: 'var(--foreground)', fontSize: 11.5, fontWeight: 600 }}
+          >
+            {SORT_META.map((s) => <option key={s.key} value={s.key}>{isAr ? s.ar : s.en}</option>)}
+          </select>
+          <button
+            onClick={() => setAnimatedOnly((v) => !v)}
+            style={{ padding: '6px 12px', borderRadius: 99, border: `1px solid ${animatedOnly ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: animatedOnly ? 'rgba(157,111,255,0.15)' : 'transparent', color: animatedOnly ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}
+          >
+            ✨ {isAr ? 'متحرك فقط' : 'Animated only'}
+          </button>
+          <button
+            onClick={() => setOwnedOnly((v) => !v)}
+            style={{ padding: '6px 12px', borderRadius: 99, border: `1px solid ${ownedOnly ? 'rgba(0,230,118,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: ownedOnly ? 'rgba(0,230,118,0.15)' : 'transparent', color: ownedOnly ? '#00e676' : 'rgba(var(--fg2-rgb),0.5)' }}
+          >
+            ✓ {isAr ? 'المملوكة فقط' : 'Owned only'}
+          </button>
+          <span style={{ marginInlineStart: 'auto', fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', fontWeight: 600 }}>
+            {isAr ? `${filtered.length} من ${items.length}` : `${filtered.length} of ${items.length}`}
+          </span>
+        </div>
+
         {filtered.length === 0 && (
           <div style={{ textAlign: 'center', padding: '40px 16px', color: 'rgba(var(--fg2-rgb),0.4)', fontSize: 13 }}>
             {isAr ? 'لا توجد عناصر في هذه الفئة' : 'No items in this category'}
@@ -281,7 +372,18 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
                 }}
               >
                 <div style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 2, background: `linear-gradient(90deg, ${meta.color}, transparent)` }} />
-                <div style={{ fontSize: 30, marginBottom: 8 }}>{item.icon}</div>
+                {item.is_featured && (
+                  <span style={{ position: 'absolute', top: 8, insetInlineEnd: 8, fontSize: 9, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#ffc400', background: 'rgba(255,196,0,0.15)', border: '1px solid rgba(255,196,0,0.35)', borderRadius: 99, padding: '2px 7px' }}>
+                    {isAr ? 'مميّز' : 'Featured'}
+                  </span>
+                )}
+                {item.thumbnail_url ? (
+                  <div style={{ width: 44, height: 44, borderRadius: 12, overflow: 'hidden', marginBottom: 8, background: 'rgba(var(--fg-rgb),0.05)' }}>
+                    <img src={item.thumbnail_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 30, marginBottom: 8 }}>{item.icon}</div>
+                )}
                 <p style={{ margin: '0 0 2px', fontSize: 12.5, fontWeight: 700, color: 'var(--foreground)', lineHeight: 1.3 }}>
                   {isAr ? item.label_ar : item.label}
                 </p>
@@ -322,7 +424,7 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
-                <ItemPreviewVisual item={item} size={item.type === 'banner' ? 72 : 92} />
+                <ItemPreviewVisual item={item} size={item.type === 'banner' ? 72 : 92} avatarUrl={profile?.avatar_url} />
               </div>
 
               <h3 style={{ textAlign: 'center', margin: '0 0 4px', fontSize: 19, fontWeight: 800, fontFamily: "'Exo 2', sans-serif", color: 'var(--foreground)' }}>

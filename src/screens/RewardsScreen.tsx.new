@@ -1,0 +1,210 @@
+import { useEffect, useState } from 'react'
+import type { Screen, Lang } from '../App'
+import TopBar from '../components/TopBar'
+import { useAuth } from '../lib/auth'
+import { getRewards, getMyRedemptions, redeemReward, getWeeklyXpEarned, type Reward } from '../lib/api'
+
+interface Props {
+  onNavigate: (s: Screen) => void
+  lang: Lang
+  setLang: (l: Lang) => void
+}
+
+// ── Toast (mirrors the minimal inline pattern used in AdminDashboardScreen) ──
+function Toast({ msg, visible, color = '#00e676' }: { msg: string; visible: boolean; color?: string }) {
+  if (!visible) return null
+  return (
+    <div
+      style={{
+        position: 'fixed', bottom: 88, left: '50%', transform: 'translateX(-50%)',
+        background: color, color: color === '#00e676' ? '#03030f' : '#fff',
+        padding: '9px 20px', borderRadius: 10, fontSize: 12, fontWeight: 700, zIndex: 9200,
+        boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+        animation: 'toast-in 0.25s ease-out',
+      }}
+    >
+      {msg}
+    </div>
+  )
+}
+
+export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
+  const { profile, refreshProfile } = useAuth()
+  const [tab, setTab] = useState<'all' | 'voucher' | 'perk' | 'recognition'>('all')
+  const [rewards, setRewards] = useState<Reward[]>([])
+  const [redeemedIds, setRedeemedIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [redeemingId, setRedeemingId] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ msg: string; color?: string } | null>(null)
+  const [weeklyXp, setWeeklyXp] = useState(0)
+  const isAr = lang === 'ar'
+  const myPts = profile?.xp ?? 0
+
+  const flash = (msg: string, color?: string) => {
+    setToast({ msg, color })
+    setTimeout(() => setToast(null), 2000)
+  }
+
+  const loadRedemptions = async (userId: string) => {
+    const rows = await getMyRedemptions(userId)
+    setRedeemedIds(new Set(rows.map((r) => r.reward_id)))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all([
+      getRewards(),
+      profile?.id ? getMyRedemptions(profile.id) : Promise.resolve([]),
+      profile?.id ? getWeeklyXpEarned(profile.id) : Promise.resolve(0),
+    ]).then(([rewardRows, redemptionRows, xpThisWeek]) => {
+      if (cancelled) return
+      setRewards(rewardRows)
+      setRedeemedIds(new Set(redemptionRows.map((r) => r.reward_id)))
+      setWeeklyXp(xpThisWeek)
+      setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [profile?.id])
+
+  const handleRedeem = async (r: Reward) => {
+    if (!r.is_available || myPts < r.cost_points || redeemedIds.has(r.id) || redeemingId) return
+    setRedeemingId(r.id)
+    const { error } = await redeemReward(r.id)
+    setRedeemingId(null)
+    if (error) {
+      flash(isAr ? 'تعذّر الاسترداد' : error, '#ff4785')
+      return
+    }
+    await refreshProfile()
+    if (profile?.id) await loadRedemptions(profile.id)
+    flash(isAr ? '✓ تم الاسترداد' : '✓ Redeemed', '#00e676')
+  }
+
+  const filtered = rewards.filter((r) => tab === 'all' || r.category === tab)
+
+  if (loading) {
+    return (
+      <div className="screen bg-mesh">
+        <TopBar title="Rewards" titleAr="المكافآت" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
+        <div style={{ padding: '40px 16px', textAlign: 'center', fontSize: 13, color: 'rgba(var(--fg-rgb),0.4)' }}>
+          {isAr ? 'جارٍ التحميل...' : 'Loading…'}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="screen bg-mesh">
+      <style>{`
+        @keyframes toast-in { from{opacity:0;transform:translate(-50%,8px)} to{opacity:1;transform:translate(-50%,0)} }
+      `}</style>
+      <Toast msg={toast?.msg || ''} visible={!!toast} color={toast?.color} />
+      <TopBar title="Rewards" titleAr="المكافآت" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
+
+      <div className="pb-nav" style={{ padding: '16px 16px', paddingBottom: 'calc(80px + 24px)' }}>
+        {/* My points */}
+        <div
+          className="glass-card"
+          style={{
+            padding: '20px',
+            marginBottom: 16,
+            background: 'linear-gradient(135deg, rgba(245,158,11,0.2) 0%, rgba(217,119,6,0.1) 100%)',
+            border: '1px solid rgba(245,158,11,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+          }}
+        >
+          <div style={{ width: 56, height: 56, borderRadius: 18, background: 'linear-gradient(135deg, #f59e0b, #d97706)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, boxShadow: '0 0 24px rgba(245,158,11,0.35)', flexShrink: 0 }}>
+            💰
+          </div>
+          <div>
+            <p style={{ margin: '0 0 2px', fontSize: 12, color: 'rgba(var(--fg-rgb),0.5)' }}>{isAr ? 'نقاطي الحالية' : 'My Current Points'}</p>
+            <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 32, fontWeight: 800, color: '#fbbf24', lineHeight: 1 }}>
+              {myPts.toLocaleString()}
+            </div>
+            {weeklyXp > 0 && (
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'rgba(var(--fg-rgb),0.4)' }}>
+                {isAr ? `+ ${weeklyXp.toLocaleString()} نقاط هذا الأسبوع` : `+${weeklyXp.toLocaleString()} pts this week`}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Filter tabs */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, overflowX: 'auto', paddingBottom: 2 }}>
+          {[
+            { key: 'all', en: 'All', ar: 'الكل' },
+            { key: 'voucher', en: 'Vouchers', ar: 'قسائم' },
+            { key: 'perk', en: 'Perks', ar: 'مزايا' },
+            { key: 'recognition', en: 'Awards', ar: 'جوائز' },
+          ].map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key as typeof tab)}
+              style={{
+                padding: '8px 16px', borderRadius: 99, border: 'none', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, transition: 'all 0.2s ease', flexShrink: 0,
+                background: tab === t.key ? 'linear-gradient(135deg, #7c3aed, #4f46e5)' : 'rgba(var(--fg-rgb),0.06)',
+                color: tab === t.key ? 'white' : 'rgba(var(--fg-rgb),0.45)',
+                fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
+              }}
+            >
+              {isAr ? t.ar : t.en}
+            </button>
+          ))}
+        </div>
+
+        {/* Rewards grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {filtered.map((r) => {
+            const canAfford = myPts >= r.cost_points
+            const isRedeemed = redeemedIds.has(r.id)
+            const isRedeeming = redeemingId === r.id
+            return (
+              <div
+                key={r.id}
+                className="glass-card"
+                style={{ padding: '16px 14px', position: 'relative', overflow: 'hidden', opacity: !r.is_available ? 0.5 : 1 }}
+              >
+                {!canAfford && r.is_available && (
+                  <div style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 2, background: 'rgba(var(--fg-rgb),0.08)' }} />
+                )}
+                {canAfford && r.is_available && (
+                  <div style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 2, background: 'linear-gradient(90deg, #f59e0b, #7c3aed)' }} />
+                )}
+
+                <div style={{ fontSize: 32, marginBottom: 10 }}>{r.icon}</div>
+                <p style={{ margin: '0 0 2px', fontSize: 13, fontWeight: 700, color: 'var(--foreground)' }}>
+                  {isAr ? r.name_ar : r.name}
+                </p>
+                <p style={{ margin: '0 0 10px', fontFamily: "'Rajdhani', sans-serif", fontSize: 18, fontWeight: 800, color: '#fbbf24' }}>
+                  {isAr ? r.display_value_ar : r.display_value}
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: canAfford ? '#10b981' : '#a78bfa', fontWeight: 600 }}>
+                    {r.cost_points.toLocaleString()} {isAr ? 'نقطة' : 'pts'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleRedeem(r)}
+                  disabled={!r.is_available || !canAfford || isRedeemed || isRedeeming}
+                  style={{
+                    width: '100%', padding: '9px', borderRadius: 10, border: 'none', cursor: r.is_available && canAfford && !isRedeemed && !isRedeeming ? 'pointer' : 'not-allowed',
+                    fontSize: 12, fontWeight: 700, transition: 'all 0.2s ease',
+                    background: isRedeemed ? 'rgba(16,185,129,0.2)' : canAfford && r.is_available ? 'linear-gradient(135deg, #f59e0b, #d97706)' : 'rgba(var(--fg-rgb),0.06)',
+                    color: isRedeemed ? '#10b981' : canAfford && r.is_available ? '#07071a' : 'rgba(var(--fg-rgb),0.3)',
+                    fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
+                  }}
+                >
+                  {isRedeemed ? (isAr ? '✓ تم الاسترداد' : '✓ Redeemed') : !r.is_available ? (isAr ? 'غير متاح' : 'Unavailable') : !canAfford ? (isAr ? 'نقاط غير كافية' : 'Not enough pts') : (isAr ? 'استرداد' : 'Redeem')}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}

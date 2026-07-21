@@ -1,0 +1,166 @@
+import { useState, useEffect } from 'react'
+import LoginScreen from './screens/LoginScreen'
+import ResetPasswordScreen from './screens/ResetPasswordScreen'
+import HomeScreen from './screens/HomeScreen'
+import GamesLibraryScreen from './screens/GamesLibraryScreen'
+import WeeklyChallengeScreen from './screens/WeeklyChallengeScreen'
+import LeaderboardScreen from './screens/LeaderboardScreen'
+import AchievementsScreen from './screens/AchievementsScreen'
+import ProfileScreen from './screens/ProfileScreen'
+import FriendsScreen from './screens/FriendsScreen'
+import RewardsScreen from './screens/RewardsScreen'
+import AdminDashboardScreen from './screens/AdminDashboardScreen'
+import GameLobbyScreen from './screens/GameLobbyScreen'
+import WorkGameScreen from './screens/WorkGameScreen'
+import CasualGameScreen from './screens/CasualGameScreen'
+import SeasonPassScreen from './screens/SeasonPassScreen'
+import TournamentScreen from './screens/TournamentScreen'
+import EmojiDecodeScreen from './screens/EmojiDecodeScreen'
+import ColorBlitzScreen from './screens/ColorBlitzScreen'
+import BottomNav from './components/BottomNav'
+import SplashScreen from './components/SplashScreen'
+import AchievementOverlayHost from './components/AchievementOverlayHost'
+import { AuthProvider, useAuth } from './lib/auth'
+
+export type Screen =
+  | 'login'
+  | 'home'
+  | 'games'
+  | 'weekly'
+  | 'leaderboard'
+  | 'achievements'
+  | 'profile'
+  | 'friends'
+  | 'rewards'
+  | 'admin'
+  | 'lobby'
+  | 'workgame'
+  | 'casualgame'
+  | 'seasonpass'
+  | 'tournament'
+  | 'emojidecode'
+  | 'colorblitz'
+
+export type Lang = 'en' | 'ar'
+export type UserRole = 'owner' | 'player'
+
+/**
+ * Kept for reference/display only — the real owner check happens
+ * server-side (app_config.owner_email + the on_auth_user_created
+ * trigger + RLS policies + every admin_* RPC calling
+ * private.require_owner()). Nothing in the client trusts this constant
+ * for access control anymore.
+ */
+export const OWNER_EMAIL = 'muraikhi13@gmail.com'
+
+const NAV_SCREENS: Screen[] = ['home', 'games', 'weekly', 'leaderboard', 'profile']
+
+function AppShell() {
+  const { session, profile, ready, isPasswordRecovery, signOut } = useAuth()
+  const [screen, setScreen] = useState<Screen>('login')
+  const [lang, setLang] = useState<Lang>('en')
+  const [gameLaunchId, setGameLaunchId] = useState<string | null>(null)
+  const [gameLaunchContext, setGameLaunchContext] = useState<{ type: 'practice' | 'challenge' | 'tournament'; refId?: string } | null>(null)
+
+  const userRole: UserRole = profile?.role === 'owner' ? 'owner' : 'player'
+  const userEmail = session?.user.email ?? ''
+
+  const isRTL = lang === 'ar'
+  const showNav = NAV_SCREENS.includes(screen)
+
+  // Navigate to home once a session + profile are ready; back to login on sign-out.
+  // A recovery session is deliberately excluded here — isPasswordRecovery
+  // takes over rendering below until the user sets a new password.
+  useEffect(() => {
+    if (!ready || isPasswordRecovery) return
+    if (session && profile) {
+      setScreen((s) => (s === 'login' ? 'home' : s))
+    } else if (!session) {
+      setScreen('login')
+    }
+  }, [ready, session, profile, isPasswordRecovery])
+
+  /** Client-side route guard — backend enforces this independently via RLS + require_owner(). */
+  const safeNavigate = (s: Screen) => {
+    if (s === 'admin' && userRole !== 'owner') return
+    setScreen(s)
+  }
+
+  /**
+   * Screens that launch a specific game pass its id through here before
+   * navigating. `context` lets a challenge/tournament screen launch
+   * gameplay that actually scores against it (context_ref_id), instead of
+   * every launch silently being 'practice' regardless of where it was
+   * started from.
+   */
+  const navigateToGame = (
+    s: Screen,
+    gameId?: string,
+    context?: { type: 'practice' | 'challenge' | 'tournament'; refId?: string }
+  ) => {
+    if (gameId) setGameLaunchId(gameId)
+    setGameLaunchContext(context ?? null)
+    safeNavigate(s)
+  }
+
+  if (!ready) {
+    return <SplashScreen />
+  }
+
+  // A recovery-link session takes over the entire app shell — checked before
+  // any normal screen renders, so there is no path from "clicked the email
+  // link" to "logged into Home" without setting a new password first.
+  if (isPasswordRecovery) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'} className={`app-shell${isRTL ? ' font-cairo' : ''}`} style={{ minHeight: '100dvh', background: '#03030f' }}>
+        <ResetPasswordScreen lang={lang} setLang={setLang} />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      dir={isRTL ? 'rtl' : 'ltr'}
+      className={`app-shell${isRTL ? ' font-cairo' : ''}`}
+      style={{ minHeight: '100dvh', background: '#03030f', position: 'relative' }}
+    >
+      {screen === 'login'       && <LoginScreen onNavigate={setScreen} lang={lang} setLang={setLang} />}
+      {screen === 'home'        && <HomeScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} lang={lang} setLang={setLang} />}
+      {screen === 'games'       && <GamesLibraryScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} lang={lang} setLang={setLang} />}
+      {screen === 'weekly'      && <WeeklyChallengeScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} lang={lang} setLang={setLang} />}
+      {screen === 'leaderboard' && <LeaderboardScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'achievements'&& <AchievementsScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'profile'     && <ProfileScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} userRole={userRole} onSignOut={signOut} />}
+      {screen === 'friends'     && <FriendsScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'rewards'     && <RewardsScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'admin'       && userRole === 'owner'
+        ? <AdminDashboardScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} userEmail={userEmail} />
+        : screen === 'admin' && (
+          <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 32, textAlign: 'center', background: '#03030f' }}>
+            <div style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 56, fontWeight: 900, color: '#ff4785', lineHeight: 1 }}>403</div>
+            <p style={{ color: 'rgba(var(--fg2-rgb),0.45)', marginTop: 8, fontSize: 14 }}>Access forbidden</p>
+            <button className="btn btn-ghost btn-sm" style={{ marginTop: 24 }} onClick={() => setScreen('profile')}>← Go back</button>
+          </div>
+        )
+      }
+      {screen === 'lobby'       && <GameLobbyScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} gameId={gameLaunchId} />}
+      {screen === 'workgame'    && <WorkGameScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} context={gameLaunchContext} />}
+      {screen === 'casualgame'  && <CasualGameScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} context={gameLaunchContext} />}
+      {screen === 'seasonpass'  && <SeasonPassScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'tournament'  && <TournamentScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
+      {screen === 'emojidecode' && <EmojiDecodeScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} />}
+      {screen === 'colorblitz' && <ColorBlitzScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} />}
+
+      {showNav && <BottomNav current={screen} onNavigate={safeNavigate} lang={lang} />}
+      {session && profile && <AchievementOverlayHost lang={lang} />}
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  )
+}

@@ -3,9 +3,7 @@ import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import Avatar from '../components/Avatar'
 import { useAuth } from '../lib/auth'
-import { getOrCreateLobby, getLobbyPlayers, setLobbyReady, leaveLobby, subscribeToLobby, type CosmeticItem } from '../lib/api'
-import { getCosmeticCatalog, resolveCosmetics, frameAvatarStyle } from '../lib/cosmetics'
-import FriendProfileSheet from '../components/FriendProfileSheet'
+import { getOrCreateLobby, getLobbyPlayers, setLobbyReady, leaveLobby, subscribeToLobby } from '../lib/api'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -23,21 +21,11 @@ export default function GameLobbyScreen({ onNavigate, lang, setLang, gameId }: P
   const [players, setPlayers] = useState<LobbyPlayer[]>([])
   const [ready, setReady] = useState(false)
   const [countdown, setCountdown] = useState<number | null>(null)
-  const [catalog, setCatalog] = useState<CosmeticItem[]>([])
-  // Tapping a player row opens their full profile preview — the lobby row
-  // itself is too compact for a banner surface, so this is how "Match
-  // lobby/profile preview" reaches the equipped animated background/header.
-  const [previewUserId, setPreviewUserId] = useState<string | null>(null)
   const isAr = lang === 'ar'
   const navigatedRef = useRef(false)
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isMe = (p: LobbyPlayer) => !!session && p.user_id === session.user.id
-
-  // Each player row's cosmetics come from p.profile (a PublicProfile from
-  // get_public_profiles, now widened to carry all 4 equip columns) — the
-  // catalog is the only piece fetched separately, shared across all rows.
-  useEffect(() => { getCosmeticCatalog().then(setCatalog) }, [])
 
   // Join/create the real-time lobby row for this game on mount.
   useEffect(() => {
@@ -63,7 +51,7 @@ export default function GameLobbyScreen({ onNavigate, lang, setLang, gameId }: P
     const unsubscribe = subscribeToLobby(lobbyId, () => {
       getLobbyPlayers(lobbyId).then(setPlayers)
     })
-    return () => { unsubscribe() }
+    return unsubscribe
   }, [lobbyId])
 
   // Leave the lobby if we navigate away before the match actually starts.
@@ -196,39 +184,17 @@ export default function GameLobbyScreen({ onNavigate, lang, setLang, gameId }: P
               const username = p.profile?.username ?? (isAr ? 'لاعب' : 'Player')
               const displayName = p.profile?.username ? `@${username}` : username
               const level = p.profile?.level ?? 1
-              const eq = p.profile ? resolveCosmetics(catalog, p.profile) : null
-              // Ready-state border wins the base look (green/gray is the
-              // primary lobby signal); an equipped frame's ring color
-              // overrides it, but the ready glow (if any) still layers on.
-              const frameStyle = frameAvatarStyle(eq?.frame ?? null, `2px solid ${isReady ? '#10b981' : 'rgba(var(--fg-rgb),0.15)'}`)
               return (
-                <div
-                  key={p.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 14, border: `1px solid ${mine ? 'rgba(124,58,237,0.3)' : 'rgba(var(--fg-rgb),0.06)'}`, cursor: p.profile ? 'pointer' : 'default' }}
-                  onClick={() => { if (p.profile) setPreviewUserId(p.user_id) }}
-                >
-                  <div style={{ position: 'relative', flexShrink: 0 }}>
-                    <Avatar
-                      url={p.profile?.avatar_url}
-                      size={44}
-                      style={{ ...frameStyle, transition: 'border-color 0.3s ease' }}
-                      frame={eq?.frame ?? null}
-                    />
-                    {eq?.decoration && (
-                      <span style={{ position: 'absolute', top: -6, right: isAr ? 'auto' : -6, left: isAr ? -6 : 'auto', fontSize: 14, lineHeight: 1, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))', pointerEvents: 'none' }}>
-                        {eq.decoration.icon}
-                      </span>
-                    )}
-                  </div>
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'rgba(var(--fg-rgb),0.04)', borderRadius: 14, border: `1px solid ${mine ? 'rgba(124,58,237,0.3)' : 'rgba(var(--fg-rgb),0.06)'}` }}>
+                  <Avatar
+                    url={p.profile?.avatar_url}
+                    size={44}
+                    style={{ border: `2px solid ${isReady ? '#10b981' : 'rgba(var(--fg-rgb),0.15)'}`, transition: 'border-color 0.3s ease' }}
+                  />
                   <div style={{ flex: 1 }}>
                     <p style={{ margin: '0 0 2px', fontSize: 13, fontWeight: mine ? 700 : 600, color: mine ? '#a78bfa' : 'var(--foreground)' }}>
                       {mine ? (isAr ? `${displayName} (أنت)` : `${displayName} (You)`) : displayName}
                     </p>
-                    {eq?.title && (
-                      <p style={{ margin: '0 0 2px', fontSize: 10, fontWeight: 700, color: '#9d6fff' }}>
-                        {eq.title.icon} {isAr ? (eq.title.label_ar || eq.title.label) : eq.title.label}
-                      </p>
-                    )}
                     <p style={{ margin: 0, fontSize: 11, color: 'rgba(var(--fg-rgb),0.35)' }}>{isAr ? `المستوى ${level}` : `Level ${level}`}</p>
                   </div>
                   <div style={{
@@ -268,10 +234,6 @@ export default function GameLobbyScreen({ onNavigate, lang, setLang, gameId }: P
           </div>
         )}
       </div>
-
-      {previewUserId && (
-        <FriendProfileSheet userId={previewUserId} lang={lang} onClose={() => setPreviewUserId(null)} />
-      )}
     </div>
   )
 }
