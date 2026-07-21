@@ -406,6 +406,37 @@ export async function adminDeleteGame(id: string) {
   return { error: null }
 }
 
+/**
+ * Uploads a game's cover artwork to the 'game-covers' Storage bucket (public
+ * read, owner-only write — see the games_library_redesign migration) and
+ * writes the resulting URL onto the game row. Fixed filename + upsert:true
+ * (mirrors uploadHeader's pattern for profile headers) so replacing a cover
+ * overwrites the previous file instead of leaving orphaned Storage objects.
+ * Cache-busted with a `?v=` query string since the object path never changes.
+ */
+export async function adminUploadGameCover(gameId: string, blob: Blob): Promise<{ url: string | null; error: string | null }> {
+  const path = `${gameId}/cover.jpg`
+  const { error: uploadError } = await supabase.storage.from('game-covers').upload(path, blob, {
+    contentType: 'image/jpeg',
+    upsert: true,
+  })
+  if (uploadError) return { url: null, error: toAdminError(uploadError) }
+  const { data } = supabase.storage.from('game-covers').getPublicUrl(path)
+  const url = `${data.publicUrl}?v=${Date.now()}`
+  const { error } = await supabase.from('games').update({ cover_image_url: url, thumbnail_image_url: url }).eq('id', gameId)
+  if (error) return { url: null, error: toAdminError(error) }
+  return { url, error: null }
+}
+
+/** Persists a new drag/up-down order for the Games list — same "renumber sort_order by array position" pattern as adminReorderBranches, but as a plain client-side update since games already has an owner-only ALL RLS policy (no RPC needed). */
+export async function adminReorderGames(orderedIds: string[]) {
+  for (let i = 0; i < orderedIds.length; i++) {
+    const { error } = await supabase.from('games').update({ sort_order: i + 1 }).eq('id', orderedIds[i])
+    if (error) return { error: toAdminError(error) }
+  }
+  return { error: null }
+}
+
 export async function adminUpsertAchievement(a: TablesInsert<'achievements'>) {
   const { error } = await supabase.from('achievements').upsert(a)
   return { error: toAdminError(error) }
@@ -557,6 +588,35 @@ export async function adminGetAllCosmeticsFull(): Promise<CosmeticItemFull[]> {
 export async function adminUpsertCosmeticItem(item: TablesInsert<'cosmetic_items'>) {
   const { error } = await supabase.from('cosmetic_items').upsert(item)
   return { error: toAdminError(error) }
+}
+
+/**
+ * Uploads a video/poster/image asset for a cosmetic item to the
+ * 'cosmetic-media' bucket (public read, owner-only write — same model as
+ * game-covers/profile-headers). Upload-only: it does NOT touch
+ * cosmetic_items itself — the returned URL is meant to be held in the
+ * CosmeticsSection form's local state and persisted together with the rest
+ * of the item's fields via the normal Save -> adminUpsertCosmeticItem flow,
+ * so a media upload doesn't silently commit an otherwise-unsaved edit.
+ * Path is keyed by item id + kind with a fixed filename (mirrors
+ * adminUploadGameCover's upsert:true pattern), so re-uploading the same
+ * kind for the same item replaces the old file instead of orphaning it.
+ */
+export async function adminUploadCosmeticMedia(
+  itemId: string,
+  kind: 'video' | 'poster' | 'image',
+  file: File,
+): Promise<{ url: string | null; error: string | null }> {
+  const ext = (file.name.split('.').pop() || (kind === 'video' ? 'mp4' : 'jpg')).toLowerCase()
+  const path = `${itemId || 'draft'}/${kind}.${ext}`
+  const contentType = file.type || (kind === 'video' ? 'video/mp4' : 'image/jpeg')
+  const { error: uploadError } = await supabase.storage.from('cosmetic-media').upload(path, file, {
+    contentType,
+    upsert: true,
+  })
+  if (uploadError) return { url: null, error: toAdminError(uploadError) }
+  const { data } = supabase.storage.from('cosmetic-media').getPublicUrl(path)
+  return { url: `${data.publicUrl}?v=${Date.now()}`, error: null }
 }
 
 export async function adminSetCosmeticAvailable(id: string, isAvailable: boolean) {

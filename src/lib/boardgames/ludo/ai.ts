@@ -1,54 +1,55 @@
 import type { BoardGameAI, AIDifficulty } from '../types'
-import { LudoEngine, isSafeGlobalCell, pieceGlobalCell, type LudoState, type LudoMove } from './engine'
+import { LudoEngine, isSafeGlobalCell, pieceGlobalCell, LUDO_FINISHED, type LudoState, type LudoMove } from './engine'
 
 /**
- * Ludo AI opponent — a heuristic move-scorer, not a search algorithm (Ludo's
- * dice randomness makes deep search low-value). Each difficulty tunes how
- * often the AI picks the best-scored move vs. a random legal one, which is
- * a simple, cheap way to get a believable difficulty curve without
- * maintaining three separate strategies.
+ * Ludo AI opponent — deterministic priority-order move selection, per the
+ * exact spec:
+ *   1. Capture an opponent
+ *   2. Finish a token at home
+ *   3. Enter the safe home lane
+ *   4. Move to a safe square
+ *   5. Release a new token after rolling 6, when no higher-priority move exists
+ *   6. Move the most advanced token
+ *   7. Otherwise, choose a valid move
+ *
+ * No randomness is involved at any difficulty — the spec defines one
+ * authoritative policy, not a tunable strength curve. `difficulty` is kept
+ * on the returned object only because the shared BoardGameAI<TState,TMove>
+ * contract requires it and the seat-setup UI labels AI seats by it; it no
+ * longer perturbs move choice.
  *
  * This module is Ludo-specific by design — a future game's AI (Chess,
  * Checkers, …) would live in its own file with its own strategy. Only the
  * BoardGameAI<TState, TMove> shape is shared.
  */
 
-const RANDOM_MOVE_CHANCE: Record<AIDifficulty, number> = { easy: 0.55, medium: 0.22, hard: 0.05 }
+interface ClassifiedMove {
+  move: LudoMove
+  tier: number // 1 = highest priority (capture) … 6 = fallback (most-advanced / otherwise)
+  pathPosBefore: number
+}
 
-function scoreMove(state: LudoState, seatIndex: number, move: LudoMove): number {
-  if (move.type === 'roll') return 0 // rolling is never optional, scoring is irrelevant
-
-  const { state: after, events } = LudoEngine.applyMove(state, seatIndex, move)
-  let score = 0
-
-  const captures = events.filter((e) => e.type === 'pieceCaptured').length
-  score += captures * 60
-
-  const wentHome = events.some((e) => e.type === 'pieceHome')
-  if (wentHome) score += 45
-
+function classify(state: LudoState, seatIndex: number, move: Extract<LudoMove, { type: 'move' }>): ClassifiedMove {
   const [pSeatStr, pIndexStr] = move.pieceId.split(':')
-  const beforePiece = state.pieces.find((p) => p.seatIndex === Number(pSeatStr) && p.pieceIndex === Number(pIndexStr))!
+  const before = state.pieces.find((p) => p.seatIndex === Number(pSeatStr) && p.pieceIndex === Number(pIndexStr))!
+  const { state: after, events } = LudoEngine.applyMove(state, seatIndex, move)
   const afterPiece = after.pieces.find((p) => p.seatIndex === Number(pSeatStr) && p.pieceIndex === Number(pIndexStr))!
 
-  const leftBase = beforePiece.pathPos === -1 && afterPiece.pathPos !== -1
-  if (leftBase) score += 25
+  const captured = events.some((e) => e.type === 'pieceCaptured')
+  const finished = afterPiece.pathPos === LUDO_FINISHED
+  const enteredHomeLane = before.pathPos < 51 && afterPiece.pathPos >= 51 && !finished
+  const landedCell = pieceGlobalCell(seatIndex, afterPiece.pathPos)
+  const landedSafe = landedCell !== null && isSafeGlobalCell(landedCell)
+  const releasedFromBase = before.pathPos === -1 && afterPiece.pathPos !== -1
 
-  // Prefer landing on a safe cell; mildly avoid sitting exposed on the ring.
-  const cell = pieceGlobalCell(seatIndex, afterPiece.pathPos)
-  if (cell !== null) {
-    if (isSafeGlobalCell(cell)) score += 8
-    else score -= 3
-  }
+  let tier = 6 // "most advanced token" / "otherwise" fallback
+  if (captured) tier = 1
+  else if (finished) tier = 2
+  else if (enteredHomeLane) tier = 3
+  else if (landedSafe) tier = 4
+  else if (releasedFromBase) tier = 5
 
-  // Small bias toward advancing the piece that's furthest along, so the AI
-  // doesn't dither between pieces forever.
-  score += Math.max(0, afterPiece.pathPos) * 0.3
-
-  // Being captured this turn is impossible to predict without opponents'
-  // exact future rolls, so we don't attempt threat modeling here — kept
-  // deliberately simple per Phase A scope.
-  return score
+  return { move, tier, pathPosBefore: before.pathPos }
 }
 
 export function createLudoAI(difficulty: AIDifficulty): BoardGameAI<LudoState, LudoMove> {
@@ -58,17 +59,19 @@ export function createLudoAI(difficulty: AIDifficulty): BoardGameAI<LudoState, L
       if (validMoves.length === 1) return validMoves[0]
       if (validMoves[0]?.type === 'roll') return validMoves[0]
 
-      if (Math.random() < RANDOM_MOVE_CHANCE[difficulty]) {
-        return validMoves[Math.floor(Math.random() * validMoves.length)]
-      }
+      // Every remaining validMoves entry is a 'move' (Ludo never mixes 'roll'
+      // with 'move' options in the same getValidMoves call — the 'roll'
+      // case above already returned), so this narrowing is safe.
+      const moveOnly = validMoves.filter((m): m is Extract<LudoMove, { type: 'move' }> => m.type === 'move')
+      const classified = moveOnly.map((m) => classify(state, seatIndex, m))
+      const bestTier = Math.min(...classified.map((c) => c.tier))
+      const candidates = classified.filter((c) => c.tier === bestTier)
 
-      let best: LudoMove = validMoves[0]
-      let bestScore = -Infinity
-      for (const move of validMoves) {
-        const s = scoreMove(state, seatIndex, move)
-        if (s > bestScore) { bestScore = s; best = move }
-      }
-      return best
+      // Tie-break within a tier (and resolve tier 6's "most advanced token /
+      // otherwise" together) by preferring the piece furthest along its path
+      // — a stable, deterministic choice with no randomness.
+      candidates.sort((a, b) => b.pathPosBefore - a.pathPosBefore)
+      return candidates[0].move
     },
   }
 }

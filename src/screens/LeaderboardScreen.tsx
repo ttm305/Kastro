@@ -3,7 +3,9 @@ import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import Avatar from '../components/Avatar'
 import { useAuth } from '../lib/auth'
-import { getLeaderboardV2, getGames, type LeaderboardScope, type Game } from '../lib/api'
+import { getLeaderboardV2, getGames, type LeaderboardScope, type Game, type CosmeticItem } from '../lib/api'
+import { getCosmeticCatalog, resolveCosmetics, frameAvatarStyle } from '../lib/cosmetics'
+import FriendProfileSheet from '../components/FriendProfileSheet'
 
 interface Props {
   // Kept optional for compatibility with the caller in App.tsx, which still
@@ -27,6 +29,9 @@ interface LBPlayer {
   isMe: boolean
   rank: number
   avatar_url: string | null
+  equipped_frame_id: string | null
+  equipped_title_id: string | null
+  equipped_decoration_id: string | null
 }
 
 const TIER = {
@@ -103,6 +108,12 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
   const [confetti, setConfetti] = useState(false)
   const [players, setPlayers] = useState<LBPlayer[]>([])
   const [loading, setLoading] = useState(true)
+  const [catalog, setCatalog] = useState<CosmeticItem[]>([])
+  // Tapping any player row/avatar opens their full profile preview — the
+  // leaderboard rows themselves are too compact for a banner surface, so
+  // this is how "Leaderboard/player preview" reaches the equipped
+  // background/header (FriendProfileSheet already renders it).
+  const [previewUserId, setPreviewUserId] = useState<string | null>(null)
   const isAr = lang === 'ar'
 
   useEffect(() => {
@@ -111,6 +122,11 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
       if (gs.length > 0) setSelectedGameId((cur) => cur || gs[0].id)
     })
   }, [])
+
+  // Every row's equipped cosmetics come straight off the get_leaderboard_v2
+  // row (now widened to return all 4 equip columns) — the catalog is the
+  // only thing fetched separately, since it's shared across all rows.
+  useEffect(() => { getCosmeticCatalog().then(setCatalog) }, [])
 
   const filter = scope === 'branch' ? (profile?.branch_id ?? null) : scope === 'game' ? (selectedGameId || null) : null
 
@@ -134,6 +150,9 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
           isMe: r.user_id === profile?.id,
           rank: r.rank,
           avatar_url: r.avatar_url,
+          equipped_frame_id: r.equipped_frame_id,
+          equipped_title_id: r.equipped_title_id,
+          equipped_decoration_id: r.equipped_decoration_id,
         }))
       setPlayers(mapped)
       setLoading(false)
@@ -311,6 +330,7 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                   </div>
                 )
               }
+              const eq = resolveCosmetics(catalog, p)
               return (
                 <div
                   key={rank}
@@ -331,17 +351,30 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                   {/* Avatar */}
                   <div
                     className={tier.glowClass}
-                    style={{ borderRadius: '50%', animation: isFirst ? 'badge-live-pulse 2s ease-in-out infinite' : 'none' }}
+                    style={{ position: 'relative', borderRadius: '50%', animation: isFirst ? 'badge-live-pulse 2s ease-in-out infinite' : 'none' }}
                     onClick={() => { if (isFirst) { setConfetti(true); setTimeout(() => setConfetti(false), 2500) } }}
                   >
-                    <Avatar url={p.avatar_url} size={isFirst ? 62 : 50} alt={p.name} />
+                    <Avatar url={p.avatar_url} size={isFirst ? 62 : 50} alt={p.name} style={frameAvatarStyle(eq.frame, '2px solid transparent')} />
+                    {eq.decoration && (
+                      <span style={{ position: 'absolute', top: -6, right: isAr ? 'auto' : -6, left: isAr ? -6 : 'auto', fontSize: isFirst ? 16 : 14, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))', pointerEvents: 'none' }}>
+                        {eq.decoration.icon}
+                      </span>
+                    )}
                   </div>
 
-                  {/* Name + points */}
-                  <div style={{ textAlign: 'center' }}>
+                  {/* Name + points — tapping opens this player's full profile
+                      preview (FriendProfileSheet), which is where the podium
+                      row's compact avatar has no room to show the equipped
+                      animated background/header. */}
+                  <div style={{ textAlign: 'center', cursor: 'pointer' }} onClick={() => setPreviewUserId(p.user_id)}>
                     <p style={{ margin: '0 0 2px', fontSize: isFirst ? 13 : 11, fontWeight: 800, color: 'var(--foreground)', lineHeight: 1.2 }}>
                       @{isAr ? p.nameAr : p.name}
                     </p>
+                    {eq.title && (
+                      <p style={{ margin: '0 0 2px', fontSize: 9.5, fontWeight: 700, color: '#9d6fff' }}>
+                        {eq.title.icon} {isAr ? (eq.title.label_ar || eq.title.label) : eq.title.label}
+                      </p>
+                    )}
                     <p style={{ margin: '0 0 4px', fontFamily: "'Exo 2', sans-serif", fontSize: isFirst ? 15 : 13, fontWeight: 900, color: tier.color }}>
                       {p.pts.toLocaleString()}
                     </p>
@@ -411,6 +444,7 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
             const rank = i + 4
             const isUp = p.change.startsWith('+') && p.change !== '+0'
             const isDown = p.change.startsWith('-')
+            const eq = resolveCosmetics(catalog, p)
             return (
               <div
                 key={rank}
@@ -421,7 +455,9 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                   background: p.isMe ? 'linear-gradient(135deg, rgba(124,58,237,0.15), rgba(0,212,255,0.06))' : 'rgba(var(--fg-rgb),0.04)',
                   border: p.isMe ? '1px solid rgba(124,58,237,0.28)' : '1px solid rgba(var(--fg-rgb),0.06)',
                   animationDelay: `${i * 0.07}s`,
+                  cursor: 'pointer',
                 }}
+                onClick={() => setPreviewUserId(p.user_id)}
               >
                 <div style={{ width: 28, textAlign: 'center', flexShrink: 0 }}>
                   <span style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 14, fontWeight: 900, color: p.isMe ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.4)' }}>
@@ -429,8 +465,13 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                   </span>
                 </div>
 
-                <div className={p.isMe ? 'aura-diamond' : ''} style={{ borderRadius: '50%', flexShrink: 0 }}>
-                  <Avatar url={p.avatar_url} size={36} alt={p.name} />
+                <div className={p.isMe ? 'aura-diamond' : ''} style={{ position: 'relative', borderRadius: '50%', flexShrink: 0 }}>
+                  <Avatar url={p.avatar_url} size={36} alt={p.name} style={frameAvatarStyle(eq.frame, '2px solid transparent')} />
+                  {eq.decoration && (
+                    <span style={{ position: 'absolute', top: -5, right: isAr ? 'auto' : -5, left: isAr ? -5 : 'auto', fontSize: 12, lineHeight: 1, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))', pointerEvents: 'none' }}>
+                      {eq.decoration.icon}
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -438,6 +479,11 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                     @{isAr ? p.nameAr : p.name}
                     {p.isMe && <span style={{ marginInlineStart: 6, fontSize: 10, color: '#9d6fff', fontWeight: 700 }}>({isAr ? 'أنت' : 'you'})</span>}
                   </p>
+                  {eq.title && (
+                    <p style={{ margin: '0 0 2px', fontSize: 9.5, fontWeight: 700, color: '#9d6fff' }}>
+                      {eq.title.icon} {isAr ? (eq.title.label_ar || eq.title.label) : eq.title.label}
+                    </p>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 10, color: 'rgba(var(--fg2-rgb),0.45)' }}>LV {p.level}</span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 10 }}>
@@ -491,6 +537,10 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
         </div>
 
       </div>
+
+      {previewUserId && (
+        <FriendProfileSheet userId={previewUserId} lang={lang} onClose={() => setPreviewUserId(null)} />
+      )}
     </div>
   )
 }

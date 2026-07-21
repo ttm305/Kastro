@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
-import { getGames, type Game } from '../lib/api'
+import { getGames, getFavoriteGameIds, toggleFavoriteGame, type Game } from '../lib/api'
+import { useAuth } from '../lib/auth'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -266,8 +267,10 @@ const LudoArt = () => (
   </svg>
 )
 
-// Games no longer carry their SVG artwork from the backend — the artwork components above stay
-// hardcoded in this file, keyed by the real `games.id` values seeded in the database.
+// Games without an admin-uploaded cover_image_url fall back to these
+// hand-built SVG "world" artworks, keyed by the real `games.id` values
+// seeded in the database — so the page never looks broken before an owner
+// uploads real cover art from the Admin Dashboard.
 const ART_MAP: Record<string, () => React.JSX.Element> = {
   wg1: SafetyArt,
   wg2: ProcedureArt,
@@ -284,9 +287,71 @@ const ART_MAP: Record<string, () => React.JSX.Element> = {
   color_blitz: ColorBlitzArt,
 }
 
+type ChipKey = 'all' | 'new' | 'multiplayer' | 'card' | 'board' | 'puzzle' | 'quick' | 'work'
+
+const CHIPS: { key: ChipKey; en: string; ar: string }[] = [
+  { key: 'all', en: 'All', ar: 'الكل' },
+  { key: 'new', en: 'New', ar: 'جديد' },
+  { key: 'card', en: 'Card', ar: 'ورق' },
+  { key: 'board', en: 'Board', ar: 'لوح' },
+  { key: 'puzzle', en: 'Puzzle', ar: 'ألغاز' },
+  { key: 'quick', en: 'Quick', ar: 'سريع' },
+  { key: 'multiplayer', en: 'Multiplayer', ar: 'متعدد اللاعبين' },
+  { key: 'work', en: 'Work Challenges', ar: 'تحديات العمل' },
+]
+
+function matchesChip(game: Game, chip: ChipKey): boolean {
+  if (chip === 'all') return true
+  if (chip === 'new') return game.is_new
+  if (chip === 'multiplayer') return game.is_multiplayer
+  return game.category === chip
+}
+
+/* Small icon buttons for the header's optional search/sort controls — same
+   36x36 rgba-chip shape TopBar's own back button uses, for visual consistency. */
+function HeaderIconButton({ onClick, active, label, children }: { onClick: () => void; active?: boolean; label: string; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      style={{
+        width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+        background: active ? 'rgba(124,58,237,0.25)' : 'rgba(var(--fg-rgb),0.08)',
+        border: `1px solid ${active ? 'rgba(124,58,237,0.4)' : 'rgba(var(--fg-rgb),0.1)'}`,
+        color: active ? '#c4b5fd' : 'var(--foreground)',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function SearchIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+}
+function SortIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7h18M6 12h12M10 17h4"/></svg>
+}
+function HeartIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill={filled ? '#ff4785' : 'none'} stroke={filled ? '#ff4785' : 'white'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.8Z"/>
+    </svg>
+  )
+}
+function PlayGlyph() {
+  return <svg width="11" height="11" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
+}
+
 export default function GamesLibraryScreen({ onNavigateToGame, lang, setLang }: Props) {
-  const [tab, setTab] = useState<'all' | 'work' | 'casual'>('all')
+  const { profile } = useAuth()
   const [games, setGames] = useState<Game[]>([])
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set())
+  const [chip, setChip] = useState<ChipKey>('all')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [sortAz, setSortAz] = useState(false)
   const isAr = lang === 'ar'
 
   useEffect(() => {
@@ -295,82 +360,122 @@ export default function GamesLibraryScreen({ onNavigateToGame, lang, setLang }: 
     return () => { cancelled = true }
   }, [])
 
-  const workGames = games.filter((g) => g.category === 'work' && g.is_active)
-  const casualGames = games.filter((g) => g.category === 'casual' && g.is_active)
+  useEffect(() => {
+    if (!profile?.id) { setFavoriteIds(new Set()); return }
+    let cancelled = false
+    getFavoriteGameIds(profile.id).then((ids) => { if (!cancelled) setFavoriteIds(new Set(ids)) })
+    return () => { cancelled = true }
+  }, [profile?.id])
 
-  const showWork = tab === 'all' || tab === 'work'
-  const showCasual = tab === 'all' || tab === 'casual'
+  const toggleFavorite = async (gameId: string) => {
+    if (!profile?.id) return
+    const isFav = favoriteIds.has(gameId)
+    setFavoriteIds((prev) => { // optimistic
+      const next = new Set(prev)
+      if (isFav) next.delete(gameId); else next.add(gameId)
+      return next
+    })
+    const { error } = await toggleFavoriteGame(profile.id, gameId, !isFav)
+    if (error) { // revert on failure
+      setFavoriteIds((prev) => {
+        const next = new Set(prev)
+        if (isFav) next.add(gameId); else next.delete(gameId)
+        return next
+      })
+    }
+  }
+
+  const activeGames = useMemo(() => games.filter((g) => g.is_active), [games])
+
+  // The single hero card at the top — only the highest-priority (lowest
+  // sort_order, since `games` is already sorted server-side) featured game,
+  // never a wall of every featured game. Hidden while filtering/searching
+  // so it doesn't compete with the "you're looking for X" results below.
+  const featuredGame = useMemo(
+    () => (chip === 'all' && !query.trim() ? activeGames.find((g) => g.is_featured) ?? null : null),
+    [activeGames, chip, query],
+  )
+
+  const gridGames = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    let list = activeGames.filter((g) => matchesChip(g, chip) && (!featuredGame || g.id !== featuredGame.id))
+    if (q) list = list.filter((g) => g.name.toLowerCase().includes(q) || g.name_ar.includes(query.trim()))
+    if (sortAz) list = [...list].sort((a, b) => (isAr ? a.name_ar.localeCompare(b.name_ar, 'ar') : a.name.localeCompare(b.name)))
+    return list
+  }, [activeGames, chip, query, featuredGame, sortAz, isAr])
 
   return (
     <div className="screen bg-game">
-      <TopBar title="Games" titleAr="الألعاب" lang={lang} setLang={setLang} />
+      <TopBar
+        title="Games"
+        titleAr="الألعاب"
+        lang={lang}
+        setLang={setLang}
+        rightSlot={
+          <>
+            <HeaderIconButton onClick={() => setSortAz((v) => !v)} active={sortAz} label={isAr ? 'ترتيب أبجدي' : 'Sort A–Z'}><SortIcon /></HeaderIconButton>
+            <HeaderIconButton onClick={() => setSearchOpen((v) => !v)} active={searchOpen} label={isAr ? 'بحث' : 'Search'}><SearchIcon /></HeaderIconButton>
+          </>
+        }
+      />
 
-      <div style={{ padding: '14px 16px 0' }}>
-        {/* Search */}
-        <div style={{ position: 'relative', marginBottom: 12 }}>
-          <span style={{ position: 'absolute', [isAr ? 'right' : 'left']: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', display: 'flex', alignItems: 'center' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--fg-rgb),0.3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-            </svg>
-          </span>
-          <input type="search" placeholder={isAr ? 'ابحث عن عالم…' : 'Search worlds…'} style={{ [isAr ? 'paddingRight' : 'paddingLeft']: 40 }} />
-        </div>
+      <div style={{ padding: '12px 16px 0' }}>
+        {searchOpen && (
+          <div style={{ position: 'relative', marginBottom: 12 }}>
+            <span style={{ position: 'absolute', [isAr ? 'right' : 'left']: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', display: 'flex', alignItems: 'center', color: 'rgba(var(--fg-rgb),0.3)' }}>
+              <SearchIcon />
+            </span>
+            <input
+              type="search"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={isAr ? 'ابحث عن لعبة…' : 'Search games…'}
+              style={{ [isAr ? 'paddingRight' : 'paddingLeft']: 40 }}
+            />
+          </div>
+        )}
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          {(['all', 'work', 'casual'] as const).map((t) => (
+        {/* Category chips — horizontally scrollable, never wraps. RTL-safe:
+            .scroll-x is a plain flex row, so the browser's own bidi handling
+            (driven by the page's dir attribute) reverses scroll direction
+            for Arabic without any extra logic here. */}
+        <div className="scroll-x" style={{ marginBottom: 16 }}>
+          {CHIPS.map((c) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={c.key}
+              onClick={() => setChip(c.key)}
               style={{
-                padding: '8px 18px', borderRadius: 99, border: 'none', cursor: 'pointer',
-                fontSize: 13, fontWeight: 700, transition: 'all 0.2s ease',
-                background: tab === t ? 'linear-gradient(135deg, #7c3aed, #5b21b6)' : 'rgba(var(--fg-rgb),0.05)',
-                color: tab === t ? 'white' : 'rgba(var(--fg2-rgb),0.5)',
-                boxShadow: tab === t ? '0 4px 14px rgba(124,58,237,0.4)' : 'none',
-                fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
+                flexShrink: 0, padding: '8px 16px', borderRadius: 99, border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', transition: 'all 0.2s ease',
+                background: chip === c.key ? 'linear-gradient(135deg, #7c3aed, #5b21b6)' : 'rgba(var(--fg-rgb),0.05)',
+                color: chip === c.key ? 'white' : 'rgba(var(--fg2-rgb),0.55)',
+                boxShadow: chip === c.key ? '0 4px 14px rgba(124,58,237,0.4)' : 'none',
               }}
             >
-              {t === 'all' ? (isAr ? 'الكل' : 'All Worlds') : t === 'work' ? (isAr ? 'تعلّم' : 'Learning') : (isAr ? 'ترفيه' : 'Fun')}
+              {isAr ? c.ar : c.en}
             </button>
           ))}
         </div>
       </div>
 
       <div className="pb-nav" style={{ padding: '0 16px' }}>
-        {showWork && (
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <div style={{ flex: 1, height: 1, background: 'rgba(var(--fg-rgb),0.06)' }} />
-              <span className={`font-display`} style={{ fontSize: 12, fontWeight: 800, color: 'rgba(var(--fg2-rgb),0.4)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
-                {isAr ? 'ألعاب التعلم' : 'Learning Worlds'}
-              </span>
-              <div style={{ flex: 1, height: 1, background: 'rgba(var(--fg-rgb),0.06)' }} />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {workGames.map((game) => (
-                <GameWorldCard key={game.id} game={game} isAr={isAr} onNavigateToGame={onNavigateToGame} />
-              ))}
-            </div>
+        {featuredGame && (
+          <div style={{ marginBottom: 18 }}>
+            <FeaturedGameCard game={featuredGame} isAr={isAr} isFavorite={favoriteIds.has(featuredGame.id)} onToggleFavorite={profile?.id ? () => toggleFavorite(featuredGame.id) : undefined} onNavigateToGame={onNavigateToGame} />
           </div>
         )}
 
-        {showCasual && (
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <div style={{ flex: 1, height: 1, background: 'rgba(var(--fg-rgb),0.06)' }} />
-              <span className="font-display" style={{ fontSize: 12, fontWeight: 800, color: 'rgba(var(--fg2-rgb),0.4)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
-                {isAr ? 'العوالم الترفيهية' : 'Fun Worlds'}
-              </span>
-              <div style={{ flex: 1, height: 1, background: 'rgba(var(--fg-rgb),0.06)' }} />
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {casualGames.map((game) => (
-                <GameWorldCard key={game.id} game={game} isAr={isAr} onNavigateToGame={onNavigateToGame} />
-              ))}
-            </div>
+        {gridGames.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '48px 20px', color: 'rgba(var(--fg2-rgb),0.4)' }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>🎮</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{isAr ? 'لا توجد ألعاب مطابقة' : 'No games match this filter'}</div>
+          </div>
+        ) : (
+          <div className="games-grid">
+            {gridGames.map((game) => (
+              <GameTile key={game.id} game={game} isAr={isAr} isFavorite={favoriteIds.has(game.id)} onToggleFavorite={profile?.id ? () => toggleFavorite(game.id) : undefined} onNavigateToGame={onNavigateToGame} />
+            ))}
           </div>
         )}
       </div>
@@ -378,105 +483,112 @@ export default function GamesLibraryScreen({ onNavigateToGame, lang, setLang }: 
   )
 }
 
-function GameWorldCard({ game, isAr, onNavigateToGame }: { game: Game, isAr: boolean, onNavigateToGame: (s: Screen, gameId?: string) => void }) {
+/** Coming-soon > Featured > New > Multiplayer, capped at 2 so a tile never gets cluttered with every badge it qualifies for. */
+function gameBadges(game: Game, isAr: boolean): { label: string; bg: string; color: string }[] {
+  const badges: { label: string; bg: string; color: string }[] = []
+  if (game.is_coming_soon) badges.push({ label: isAr ? 'قريباً' : 'Coming Soon', bg: 'rgba(3,3,15,0.55)', color: 'rgba(255,255,255,0.75)' })
+  if (game.is_featured) badges.push({ label: isAr ? 'مميزة' : 'Featured', bg: 'rgba(255,215,0,0.9)', color: '#03030f' })
+  if (game.is_new) badges.push({ label: isAr ? 'جديد' : 'New', bg: 'rgba(0,212,255,0.9)', color: '#03030f' })
+  if (game.is_multiplayer) badges.push({ label: isAr ? 'متعدد' : 'Multiplayer', bg: 'rgba(0,230,118,0.9)', color: '#03030f' })
+  return badges.slice(0, 2)
+}
+
+function FavoriteHeart({ filled, onClick, isAr }: { filled: boolean; onClick: () => void; isAr: boolean }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick() }}
+      aria-label={isAr ? 'إضافة للمفضلة' : 'Favorite'}
+      style={{
+        position: 'absolute', top: 8, [isAr ? 'left' : 'right']: 8, zIndex: 2,
+        width: 26, height: 26, borderRadius: '50%', border: 'none', cursor: 'pointer',
+        background: 'rgba(3,3,15,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)',
+      }}
+    >
+      <HeartIcon filled={filled} />
+    </button>
+  )
+}
+
+function GameTile({ game, isAr, isFavorite, onToggleFavorite, onNavigateToGame }: {
+  game: Game; isAr: boolean; isFavorite: boolean; onToggleFavorite?: () => void; onNavigateToGame: (s: Screen, gameId?: string) => void
+}) {
   const coming = game.is_coming_soon
-  const featured = game.is_featured
-  const Art = ART_MAP[game.id] ?? SafetyArt // fallback in case a new game id has no artwork mapped yet
+  const Art = ART_MAP[game.id] ?? SafetyArt
+  const badges = gameBadges(game, isAr)
 
-  if (featured) {
-    // Wide featured card with more height and prominent layout
-    return (
-      <div
-        className={`card card-hover ${game.world ?? ''}`}
-        style={{ overflow: 'hidden', opacity: coming ? 0.65 : 1, border: `1px solid ${game.accent_color}35`, boxShadow: `0 0 40px ${game.accent_color}12` }}
-        onClick={() => !coming && onNavigateToGame(game.target_screen as Screen, game.id)}
-      >
-        <div style={{ height: 140, position: 'relative', overflow: 'hidden' }}>
-          <Art />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 20%, rgba(3,3,15,0.85) 100%)' }} />
-          {/* Featured label */}
-          <div style={{ position: 'absolute', top: 10, left: 12 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: game.accent_color, background: `${game.accent_color}18`, border: `1px solid ${game.accent_color}35`, borderRadius: 6, padding: '3px 8px', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
-              {isAr ? 'مميز' : 'FEATURED'}
-            </span>
-          </div>
-          <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 5 }}>
-            {game.tag === 'hot' && <span className="badge badge-hot">HOT</span>}
-            {game.tag === 'new' && <span className="badge badge-new">NEW</span>}
-          </div>
-          <div style={{ position: 'absolute', bottom: 14, left: 16, right: 16 }}>
-            <p style={{ margin: '0 0 2px', fontFamily: isAr ? "'Cairo', sans-serif" : "'Exo 2', sans-serif", fontSize: 20, fontWeight: 900, color: 'var(--foreground)' }}>
-              {isAr ? game.name_ar : game.name}
-            </p>
-            <span style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 10, fontWeight: 800, color: game.accent_color, letterSpacing: '0.18em', textTransform: 'uppercase', opacity: 0.85 }}>
-              {isAr ? game.tagline_ar : game.tagline}
-            </span>
-          </div>
-        </div>
-        <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 16, fontWeight: 900, color: game.accent_color }}>+{game.base_xp}</div>
-              <div style={{ fontSize: 9, color: 'rgba(var(--fg2-rgb),0.45)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>XP</div>
-            </div>
-            <div style={{ width: 1, background: 'rgba(var(--fg-rgb),0.07)' }} />
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 16, fontWeight: 900, color: '#00e676' }}>~8</div>
-              <div style={{ fontSize: 9, color: 'rgba(var(--fg2-rgb),0.45)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{isAr ? 'دقائق' : 'min'}</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 18px', borderRadius: 12, background: `linear-gradient(135deg, ${game.accent_color}, ${game.accent_color}aa)`, boxShadow: `0 4px 16px ${game.accent_color}35` }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
-            <span style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 13, fontWeight: 800, color: game.accent_color === '#ffd700' ? '#03030f' : 'white' }}>
-              {isAr ? 'العب الآن' : 'Play Now'}
-            </span>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Standard card
   return (
     <div
-      className={`card card-hover ${game.world ?? ''}`}
-      style={{ overflow: 'hidden', opacity: coming ? 0.65 : 1 }}
+      className={`game-tile card-hover ${game.cover_image_url ? '' : (game.world ?? '')}`}
+      style={{ opacity: coming ? 0.65 : 1, boxShadow: `0 0 24px ${game.accent_color}10` }}
       onClick={() => !coming && onNavigateToGame(game.target_screen as Screen, game.id)}
     >
-      <div style={{ height: 90, position: 'relative', overflow: 'hidden' }}>
-        <Art />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 20%, rgba(3,3,15,0.82) 100%)' }} />
-        <div style={{ position: 'absolute', bottom: 8, left: 14 }}>
-          <span style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 9, fontWeight: 800, color: game.accent_color, letterSpacing: '0.2em', textTransform: 'uppercase', opacity: 0.8 }}>
-            {isAr ? game.tagline_ar : game.tagline}
+      {game.cover_image_url ? <img src={game.cover_image_url} alt="" /> : <div className="game-tile-art"><Art /></div>}
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 40%, rgba(3,3,15,0.88) 100%)' }} />
+
+      {onToggleFavorite && <FavoriteHeart filled={isFavorite} onClick={onToggleFavorite} isAr={isAr} />}
+
+      {badges.length > 0 && (
+        <div style={{ position: 'absolute', top: 8, [isAr ? 'right' : 'left']: 8, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 1 }}>
+          {badges.map((b) => (
+            <span key={b.label} style={{ fontSize: 9, fontWeight: 800, background: b.bg, color: b.color, borderRadius: 6, padding: '3px 7px', letterSpacing: '0.05em', textTransform: 'uppercase', width: 'fit-content' }}>
+              {b.label}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '10px 12px' }}>
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {isAr ? game.name_ar : game.name}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function FeaturedGameCard({ game, isAr, isFavorite, onToggleFavorite, onNavigateToGame }: {
+  game: Game; isAr: boolean; isFavorite: boolean; onToggleFavorite?: () => void; onNavigateToGame: (s: Screen, gameId?: string) => void
+}) {
+  const Art = ART_MAP[game.id] ?? SafetyArt
+  const coming = game.is_coming_soon
+
+  return (
+    <div
+      className={`game-featured card-hover ${game.cover_image_url ? '' : (game.world ?? '')}`}
+      style={{ opacity: coming ? 0.65 : 1 }}
+      onClick={() => !coming && onNavigateToGame(game.target_screen as Screen, game.id)}
+    >
+      {game.cover_image_url ? <img src={game.cover_image_url} alt="" /> : <div className="game-tile-art"><Art /></div>}
+      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 25%, rgba(3,3,15,0.9) 100%)' }} />
+
+      <div style={{ position: 'absolute', top: 12, [isAr ? 'right' : 'left']: 14 }}>
+        <span style={{ fontSize: 10, fontWeight: 800, color: '#03030f', background: '#ffd700', borderRadius: 6, padding: '4px 10px', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+          {isAr ? 'مميز' : 'Featured'}
+        </span>
+        {coming && (
+          <span style={{ marginInlineStart: 6, fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.85)', background: 'rgba(3,3,15,0.6)', borderRadius: 6, padding: '4px 10px', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            {isAr ? 'قريباً' : 'Coming Soon'}
           </span>
-        </div>
-        <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
-          {game.tag === 'hot' && <span className="badge badge-hot">HOT</span>}
-          {game.tag === 'new' && <span className="badge badge-new">NEW</span>}
-          {coming && <span className="badge badge-soon">{isAr ? 'قريباً' : 'SOON'}</span>}
-        </div>
+        )}
+        {!coming && game.is_multiplayer && (
+          <span style={{ marginInlineStart: 6, fontSize: 10, fontWeight: 800, color: '#03030f', background: '#00e676', borderRadius: 6, padding: '4px 10px', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+            {isAr ? 'متعدد اللاعبين' : 'Multiplayer'}
+          </span>
+        )}
       </div>
 
-      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: '0 0 2px', fontSize: 14, fontWeight: 800, color: 'var(--foreground)', fontFamily: isAr ? "'Cairo', sans-serif" : "'Exo 2', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {isAr ? game.name_ar : game.name}
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="9" height="9" viewBox="0 0 24 24" fill={game.accent_color}><polygon points="13,2 3,14 12,14 11,22 21,10 12,10"/></svg>
-            <span style={{ fontFamily: "'Exo 2', sans-serif", fontSize: 11, fontWeight: 800, color: game.accent_color }}>+{game.base_xp} XP</span>
-          </div>
-        </div>
-        {coming ? (
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(var(--fg-rgb),0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--fg2-rgb),0.3)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-          </div>
-        ) : (
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: `${game.accent_color}20`, border: `1px solid ${game.accent_color}35`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 12px ${game.accent_color}20` }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill={game.accent_color}><polygon points="5,3 19,12 5,21"/></svg>
+      {onToggleFavorite && <FavoriteHeart filled={isFavorite} onClick={onToggleFavorite} isAr={isAr} />}
+
+      <div style={{ position: 'absolute', bottom: 16, left: 18, right: 18, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+        <p style={{ margin: 0, fontSize: 22, fontWeight: 900, color: 'white', lineHeight: 1.15 }}>
+          {isAr ? game.name_ar : game.name}
+        </p>
+        {!coming && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', borderRadius: 12, background: `linear-gradient(135deg, ${game.accent_color}, ${game.accent_color}aa)`, boxShadow: `0 4px 16px ${game.accent_color}40`, flexShrink: 0 }}>
+            <PlayGlyph />
+            <span style={{ fontSize: 12, fontWeight: 800, color: game.accent_color === '#ffd700' ? '#03030f' : 'white' }}>
+              {isAr ? 'العب' : 'Play'}
+            </span>
           </div>
         )}
       </div>

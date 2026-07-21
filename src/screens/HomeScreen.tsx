@@ -22,7 +22,10 @@ import {
   type Game,
   type Achievement,
   type Branch,
+  type CosmeticItem,
 } from '../lib/api'
+import { getCosmeticCatalog, resolveCosmetics, frameAvatarStyle } from '../lib/cosmetics'
+import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -123,8 +126,13 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
   const [rank, setRank] = useState<number | null>(null)
   const [friendsOnline, setFriendsOnline] = useState<FriendProfile[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
+  const [catalog, setCatalog] = useState<CosmeticItem[]>([])
 
   useEffect(() => { getBranches().then(({ data }) => setBranches(data)) }, [])
+  // Own equipped cosmetics — read fresh from `profile` (which itself comes
+  // from Supabase via useAuth/refreshProfile), same resolver every other
+  // screen uses, so this card always matches what everyone else sees.
+  useEffect(() => { getCosmeticCatalog().then(setCatalog) }, [])
   const myBranch = branches.find((b) => b.id === profile?.branch_id)
 
   // Keep the "Daily Reward Ready" card in sync with the server's record of the last claim,
@@ -223,6 +231,8 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
   // button in production can't trigger a fake level-up animation.
   if (!profile) return null
 
+  const equipped = resolveCosmetics(catalog, profile)
+
   return (
     <div className="screen bg-game">
       {showDailyReward && (
@@ -258,16 +268,40 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
       <div className="pb-nav" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
         {/* ─ 1. PLAYER IDENTITY ─────────────────────── */}
+        {/* Reuses the same profile.header_url as ProfileScreen's hero and
+            FriendProfileSheet's header band — one image, three places. When
+            set, it becomes this card's background (object-fit: cover, fixed
+            center focal point, never stretched) under a dark gradient
+            overlay strong enough to keep the avatar/username/branch/level/
+            XP/streak text readable over an arbitrarily bright photo. With
+            no custom header, the card falls back to the exact original
+            premium gradient + starfield — unchanged. */}
         <div
           className="card"
           style={{
             padding: '20px',
-            background: 'linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(0,212,255,0.09) 100%)',
+            background: profile.header_url || equipped.banner ? undefined : 'linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(0,212,255,0.09) 100%)',
             border: '1px solid rgba(124,58,237,0.28)',
             position: 'relative', overflow: 'hidden',
           }}
         >
-          <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.5, pointerEvents: 'none' }} />
+          {profile.header_url ? (
+            <>
+              <img
+                src={profile.header_url}
+                alt=""
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+              />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(10,6,30,0.82) 0%, rgba(10,6,30,0.68) 55%, rgba(10,6,30,0.85) 100%)' }} />
+            </>
+          ) : equipped.banner ? (
+            <>
+              <CosmeticBannerLayer banner={equipped.banner} fallbackGradient="linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(0,212,255,0.09) 100%)" />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, rgba(10,6,30,0.82) 0%, rgba(10,6,30,0.68) 55%, rgba(10,6,30,0.85) 100%)' }} />
+            </>
+          ) : (
+            <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.5, pointerEvents: 'none' }} />
+          )}
 
           {/* Power Hour */}
           {activePowerHour && (
@@ -283,7 +317,12 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
           {/* Player row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, position: 'relative', zIndex: 1 }}>
             <div style={{ position: 'relative', flexShrink: 0 }}>
-              <Avatar url={profile.avatar_url} size={64} className="aura-diamond" />
+              <Avatar url={profile.avatar_url} size={64} className="aura-diamond" style={frameAvatarStyle(equipped.frame, '3px solid transparent')} />
+              {equipped.decoration && (
+                <span style={{ position: 'absolute', top: -8, right: isAr ? 'auto' : -8, left: isAr ? -8 : 'auto', fontSize: 20, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))', pointerEvents: 'none', zIndex: 2 }}>
+                  {equipped.decoration.icon}
+                </span>
+              )}
               <div style={{ position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg, #ffd700, #f59e0b)', borderRadius: 99, padding: '2px 8px', fontSize: 10, fontWeight: 900, color: '#03030f', border: '2px solid var(--background)', zIndex: 2, fontFamily: "'Exo 2', sans-serif", whiteSpace: 'nowrap' }}>
                 LV {profile.level}
               </div>
@@ -296,6 +335,11 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
               <h2 className={isAr ? 'font-cairo' : 'font-display'} style={{ margin: '0 0 4px', fontSize: 21, fontWeight: 800, color: 'var(--foreground)' }}>
                 @{profile.username}
               </h2>
+              {equipped.title && (
+                <p style={{ margin: '0 0 4px', fontSize: 11.5, fontWeight: 700, color: '#9d6fff' }}>
+                  {equipped.title.icon} {isAr ? (equipped.title.label_ar || equipped.title.label) : equipped.title.label}
+                </p>
+              )}
               {myBranch && (
                 <p style={{ margin: 0, fontSize: 11, color: 'rgba(var(--fg2-rgb),0.5)' }}>
                   {isAr ? myBranch.name_ar : myBranch.name_en}

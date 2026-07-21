@@ -7,6 +7,8 @@ import { isPushSupported, getNotificationPermission, isPushSubscribedLocally, en
 import { isNativePlatform, enableNativePush, disableNativePush } from '../lib/nativePush'
 import Avatar from '../components/Avatar'
 import AvatarPickerModal from '../components/AvatarPickerModal'
+import HeaderPickerModal from '../components/HeaderPickerModal'
+import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 import {
   getAchievementsWithStatus,
   getProfileStats,
@@ -25,9 +27,19 @@ import {
   type Branch,
   type XpLedgerEntry,
   type GameStat,
+  type CosmeticItem,
 } from '../lib/api'
+import { getCosmeticCatalog, resolveCosmetics, frameAvatarStyle, bannerBackground } from '../lib/cosmetics'
 
 const MAX_USERNAME_LEN = 24
+
+// Shown whenever a user has neither a custom cover photo nor an owned/
+// equipped "Profile Banner" cosmetic — previously this fell through to
+// `background: undefined` (a plain transparent 160px strip), which is
+// almost certainly what read as "too much empty space at the top" for any
+// account that hasn't bought a banner from the shop. A real gradient here
+// means the hero never renders blank.
+const DEFAULT_HERO_GRADIENT = 'linear-gradient(135deg, #1a0b3d 0%, #4c1d95 45%, #0891b2 100%)'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -337,6 +349,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const [editMode, setEditMode] = useState(false)
   const [selectedBadge, setSelectedBadge] = useState<Badge | null>(null)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
+  const [showHeaderPicker, setShowHeaderPicker] = useState(false)
 
   // Profile editor drafts (bio / username / branch)
   const [bioDraft, setBioDraft] = useState('')
@@ -355,6 +368,12 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const [activityLog, setActivityLog] = useState<ActivityRow[]>([])
   const [achievements, setAchievements] = useState<AchievementWithStatus[]>([])
   const [cosmetics, setCosmetics] = useState<CosmeticsData>({ frames: [], banners: [], titles: [], decorations: [] })
+  // Full cosmetic_items catalog (all items, not just owned ones) — needed to
+  // translate whatever is actually equipped (profile.equipped_*_id, read
+  // fresh from the DB via useAuth's profile) into real render data. See
+  // src/lib/cosmetics.ts for why this must not fall back to "first owned
+  // item" the way the old local `frames.find(...) ?? frames[0]` logic did.
+  const [catalog, setCatalog] = useState<CosmeticItem[]>([])
   const [season, setSeason] = useState<SeasonData>(null)
   const [seasonTrack, setSeasonTrack] = useState<SeasonTrackData | null>(null)
   const [favoriteGame, setFavoriteGame] = useState<{ en: string; ar: string; xp: number; sessions: number; color: string } | null>(null)
@@ -371,11 +390,12 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
     if (!profile) return
     let active = true
     ;(async () => {
-      const [stats, log, ach, cos, board, activeSeason, favGame, xpHist, gStats] = await Promise.all([
+      const [stats, log, ach, cos, cat, board, activeSeason, favGame, xpHist, gStats] = await Promise.all([
         getProfileStats(profile.id),
         getActivityLog(profile.id),
         getAchievementsWithStatus(profile.id),
         getCosmetics(profile.id),
+        getCosmeticCatalog(),
         getLeaderboard('weekly'),
         getActiveSeason(),
         getFavoriteGame(profile.id),
@@ -387,6 +407,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
       setActivityLog(log)
       setAchievements(ach)
       setCosmetics(cos)
+      setCatalog(cat)
       setFavoriteGame(favGame)
       setXpHistory(xpHist)
       setGameStats(gStats)
@@ -433,13 +454,18 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const titles = cosmetics.titles.filter((t) => t.owned)
   const decorations = cosmetics.decorations.filter((d) => d.owned)
 
-  const currentFrame = frames.find((f) => f.id === selectedFrame) ?? frames[0]
-  const currentBanner = banners.find((b) => b.id === selectedBanner) ?? banners[0]
-  const currentTitle = titles.find((t) => t.id === selectedTitle)
-  const currentDecoration = decorations.find((d) => d.id === selectedDecoration)
-  const currentBannerBg = (currentBanner?.style as any)?.bg
-    ?? 'linear-gradient(135deg, #0d0d28 0%, #1a0a3d 50%, #0d1a3d 100%)'
-  const currentFrameStyle = (currentFrame?.style as any) ?? {}
+  // What's actually shown on the hero comes strictly from the DB — the
+  // profile object's equipped_*_id columns (refreshed via refreshProfile()
+  // after every equip/unequip) resolved against the full catalog. This is
+  // deliberately NOT derived from `selected*` local state or from "first
+  // owned item": an unequipped slot resolves to null here and renders this
+  // screen's real default (no frame ring, DEFAULT_HERO_GRADIENT banner, no
+  // title, no decoration) rather than silently picking whatever the owned
+  // list happens to start with.
+  const equipped = resolveCosmetics(catalog, profile)
+  const currentTitle = equipped.title
+  const currentDecoration = equipped.decoration
+  const currentFrameStyle = frameAvatarStyle(equipped.frame, '3px solid var(--background)')
 
   async function handleSelectFrame(id: string) {
     setSelectedFrame(id)
@@ -567,6 +593,16 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
         />
       )}
 
+      {showHeaderPicker && (
+        <HeaderPickerModal
+          lang={lang}
+          userId={profile.id}
+          currentHeaderUrl={profile.header_url}
+          onClose={() => setShowHeaderPicker(false)}
+          onSaved={() => { refreshProfile(); setShowHeaderPicker(false) }}
+        />
+      )}
+
       {/* Save confirmation / error toast */}
       {toast && (
         <div style={{
@@ -614,9 +650,38 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
         </div>
       )}
 
-      {/* Hero banner */}
-      <div style={{ position: 'relative', height: 160, overflow: 'hidden', background: currentBannerBg }}>
-        <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.7 }} />
+      {/* Hero banner — priority order: custom cover photo, then an owned/
+          equipped "Profile Banner" cosmetic gradient, then a premium KASTRO
+          default gradient. Never blank. */}
+      <div style={{ position: 'relative', height: 256, overflow: 'hidden', background: profile.header_url || equipped.banner ? undefined : DEFAULT_HERO_GRADIENT }}>
+        {profile.header_url ? (
+          <>
+            <img
+              src={profile.header_url}
+              alt=""
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center' }}
+            />
+            {/* Bottom-weighted dark gradient so the top controls, pinned badges,
+                and the avatar/username that overlaps the lower edge all stay
+                legible over an arbitrarily bright photo. Slightly deepened
+                and re-tuned for the taller header (was 160px, now 220px) so
+                the darkest part still lands right behind the overlapping
+                avatar/username instead of higher up the image. */}
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(3,3,15,0.12) 0%, rgba(3,3,15,0.08) 35%, rgba(3,3,15,0.55) 72%, rgba(3,3,15,0.85) 100%)' }} />
+          </>
+        ) : equipped.banner ? (
+          <>
+            {/* Equipped Profile Banner cosmetic — real looping <video> when
+                is_animated, a static image, or the CSS gradient, decided
+                entirely inside CosmeticBannerLayer. Same legibility overlay
+                as the custom-photo branch above so text stays readable
+                whether the banner is a still gradient or playing video. */}
+            <CosmeticBannerLayer banner={equipped.banner} fallbackGradient={DEFAULT_HERO_GRADIENT} />
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(3,3,15,0.12) 0%, rgba(3,3,15,0.08) 35%, rgba(3,3,15,0.55) 72%, rgba(3,3,15,0.85) 100%)' }} />
+          </>
+        ) : (
+          <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.7 }} />
+        )}
 
         {/* Top controls */}
         <div style={{ position: 'absolute', top: 14, left: 16, right: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
@@ -663,15 +728,33 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
         </div>
       </div>
 
-      {/* Avatar overlapping banner */}
-      <div style={{ position: 'relative', padding: '0 20px', marginTop: -34 }}>
+      {/* Avatar overlapping banner. The previous -52 margin actually had the
+          avatar poking out PAST the header's bottom edge (header ended at
+          Y=220, avatar spanned Y=168-236 — the avatar's own bottom 16px hung
+          below the header, which is why the header visibly cut off around
+          the avatar's middle/lower-middle on device).
+          Fix: the avatar's absolute position is now pinned (top stays at
+          Y=168, identical to before — it has NOT moved) while the header
+          itself grew from 220 to 256. Since marginTop is measured from the
+          hero's NEW bottom edge, it must grow by the same amount the hero
+          grew (52 -> 88) purely to keep the avatar's on-screen position
+          unchanged; this is a derived consequence of pinning the avatar, not
+          a standalone margin tweak. Net effect: header now extends ~20px
+          *past* the avatar's bottom edge (Y=256 vs avatar bottom Y=236),
+          i.e. the header genuinely continues behind the full avatar. */}
+      <div style={{ position: 'relative', padding: '0 20px', marginTop: -88, marginBottom: 36 }}>
+        {/* marginBottom:36 reserves clearance below the avatar so the
+            username block (next sibling, inside .pb-nav) starts safely
+            AFTER the header's bottom edge (avatar bottom = 236, header
+            bottom = 256, +16px buffer = 272) instead of 20px before it —
+            fixes the header image visually covering the username text. */}
         <div style={{ position: 'relative', width: 68, height: 68 }}>
           <button
             onClick={() => setShowAvatarPicker(true)}
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'block', borderRadius: '50%' }}
             aria-label={isAr ? 'تغيير الصورة الرمزية' : 'Change avatar'}
           >
-            <Avatar url={profile.avatar_url} size={68} style={{ border: '3px solid var(--background)', ...currentFrameStyle }} />
+            <Avatar url={profile.avatar_url} size={68} style={{ ...currentFrameStyle }} />
           </button>
           {currentDecoration && (
             <span
@@ -697,11 +780,18 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
         </div>
       </div>
 
-      <div className="pb-nav" style={{ padding: '12px 20px' }}>
+      <div className="pb-nav" style={{ padding: '12px 20px', background: 'var(--background)', position: 'relative' }}>
 
         {/* Name & rank */}
         <div style={{ marginBottom: 16 }}>
-          <h2 className={isAr ? 'font-cairo' : 'font-display'} style={{ margin: '0 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--foreground)' }}>
+          {/* Usernames are plain user-chosen identifiers (letters, digits,
+              underscores) — they must use the app's regular UI font, not
+              the decorative "Exo 2" display font (whose stylized glyphs,
+              e.g. a slanted/geometric uppercase T, made short usernames
+              like "@T" look distorted/mis-rendered). Cairo is kept for
+              Arabic since it's the app's standard RTL body font, not a
+              decorative one. */}
+          <h2 className={isAr ? 'font-cairo' : undefined} style={{ margin: '0 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--foreground)' }}>
             @{profile.username}
           </h2>
           {/* Owner-assigned custom title — cosmetic only, separate from the
@@ -764,6 +854,35 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
                 <Avatar url={profile.avatar_url} size={48} />
                 <button className="btn btn-ghost btn-sm" onClick={() => setShowAvatarPicker(true)}>
                   {isAr ? 'تغيير الصورة' : 'Change Photo'}
+                </button>
+              </div>
+            </div>
+
+            {/* Cover Image / Profile Header — distinct from the "Profile
+                Banner" cosmetic below: this is a user-uploaded photo, not a
+                purchased gradient. A custom cover photo takes visual
+                priority over an equipped Profile Banner wherever both would
+                otherwise show (see the hero banner above). */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 700, color: '#9d6fff', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                {isAr ? 'صورة الغلاف' : 'Cover Image'}
+              </p>
+              <div
+                style={{
+                  height: 60, borderRadius: 10, marginBottom: 10, overflow: 'hidden', position: 'relative',
+                  background: profile.header_url || equipped.banner ? undefined : DEFAULT_HERO_GRADIENT,
+                  border: '1px solid rgba(var(--fg-rgb),0.08)',
+                }}
+              >
+                {profile.header_url ? (
+                  <img src={profile.header_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : equipped.banner ? (
+                  <CosmeticBannerLayer banner={equipped.banner} fallbackGradient={DEFAULT_HERO_GRADIENT} />
+                ) : null}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowHeaderPicker(true)}>
+                  {profile.header_url ? (isAr ? 'تغيير الغلاف' : 'Change Cover') : (isAr ? 'إضافة صورة غلاف' : 'Add Cover Image')}
                 </button>
               </div>
             </div>
@@ -876,7 +995,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
               </p>
               <div style={{ display: 'flex', gap: 8 }}>
                 {banners.map((b) => (
-                  <button key={b.id} onClick={() => handleSelectBanner(b.id)} style={{ flex: 1, height: 36, borderRadius: 10, border: `2px solid ${selectedBanner === b.id ? '#9d6fff' : 'transparent'}`, background: (b.style as any)?.bg, cursor: 'pointer' }} />
+                  <button key={b.id} onClick={() => handleSelectBanner(b.id)} style={{ flex: 1, height: 36, borderRadius: 10, border: `2px solid ${selectedBanner === b.id ? '#9d6fff' : 'transparent'}`, background: bannerBackground(b, DEFAULT_HERO_GRADIENT), cursor: 'pointer' }} />
                 ))}
               </div>
             </div>

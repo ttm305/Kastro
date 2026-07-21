@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "format": "oxfmt",
+    "test": "vitest run",
     "cap:sync": "npm run build && npx cap sync",
     "cap:ios": "npm run build && npx cap sync ios && npx cap open ios",
     "cap:android": "npm run build && npx cap sync android && npx cap open android"
@@ -32,6 +33,7 @@
     "oxfmt": "0.2.0",
     "typescript": "5.9.3",
     "vite": "8.1.4",
+    "vitest": "^2.1.8",
     "@capacitor/cli": "^8.0.0",
     "@capacitor/ios": "^8.0.0",
     "@capacitor/android": "^8.0.0"

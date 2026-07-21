@@ -337,6 +337,9 @@ export type Database = {
       board_game_players: {
         Row: {
           ai_difficulty: string | null
+          consecutive_missed_turns: number
+          eliminated_at: string | null
+          elimination_reason: string | null
           final_rank: number | null
           final_score: number | null
           id: string
@@ -344,6 +347,7 @@ export type Database = {
           is_connected: boolean
           is_ready: boolean
           joined_at: string
+          last_action_at: string | null
           last_heartbeat_at: string
           left_at: string | null
           room_id: string
@@ -352,6 +356,9 @@ export type Database = {
         }
         Insert: {
           ai_difficulty?: string | null
+          consecutive_missed_turns?: number
+          eliminated_at?: string | null
+          elimination_reason?: string | null
           final_rank?: number | null
           final_score?: number | null
           id?: string
@@ -359,6 +366,7 @@ export type Database = {
           is_connected?: boolean
           is_ready?: boolean
           joined_at?: string
+          last_action_at?: string | null
           last_heartbeat_at?: string
           left_at?: string | null
           room_id: string
@@ -367,6 +375,9 @@ export type Database = {
         }
         Update: {
           ai_difficulty?: string | null
+          consecutive_missed_turns?: number
+          eliminated_at?: string | null
+          elimination_reason?: string | null
           final_rank?: number | null
           final_score?: number | null
           id?: string
@@ -374,6 +385,7 @@ export type Database = {
           is_connected?: boolean
           is_ready?: boolean
           joined_at?: string
+          last_action_at?: string | null
           last_heartbeat_at?: string
           left_at?: string | null
           room_id?: string
@@ -408,8 +420,10 @@ export type Database = {
           join_code: string | null
           max_players: number
           min_players: number
+          rewards_granted_at: string | null
           started_at: string | null
           status: string
+          turn_deadline_at: string | null
           turn_seat_index: number | null
           turn_started_at: string | null
           turn_timer_seconds: number
@@ -424,8 +438,10 @@ export type Database = {
           join_code?: string | null
           max_players?: number
           min_players?: number
+          rewards_granted_at?: string | null
           started_at?: string | null
           status?: string
+          turn_deadline_at?: string | null
           turn_seat_index?: number | null
           turn_started_at?: string | null
           turn_timer_seconds?: number
@@ -440,8 +456,10 @@ export type Database = {
           join_code?: string | null
           max_players?: number
           min_players?: number
+          rewards_granted_at?: string | null
           started_at?: string | null
           status?: string
+          turn_deadline_at?: string | null
           turn_seat_index?: number | null
           turn_started_at?: string | null
           turn_timer_seconds?: number
@@ -763,6 +781,11 @@ export type Database = {
           style: Json
           type: string
           unlock_criteria: Json
+          media_type: string
+          image_url: string | null
+          video_url: string | null
+          poster_url: string | null
+          is_animated: boolean
         }
         Insert: {
           id: string
@@ -780,6 +803,11 @@ export type Database = {
           style?: Json
           type: string
           unlock_criteria?: Json
+          media_type?: string
+          image_url?: string | null
+          video_url?: string | null
+          poster_url?: string | null
+          is_animated?: boolean
         }
         Update: {
           id?: string
@@ -797,6 +825,11 @@ export type Database = {
           style?: Json
           type?: string
           unlock_criteria?: Json
+          media_type?: string
+          image_url?: string | null
+          video_url?: string | null
+          poster_url?: string | null
+          is_animated?: boolean
         }
         Relationships: []
       }
@@ -1277,11 +1310,14 @@ export type Database = {
           accent_color: string
           base_xp: number
           category: string
+          cover_image_url: string | null
           icon_key: string
           id: string
           is_active: boolean
           is_coming_soon: boolean
           is_featured: boolean
+          is_multiplayer: boolean
+          is_new: boolean
           name: string
           name_ar: string
           sort_order: number
@@ -1289,17 +1325,21 @@ export type Database = {
           tagline: string
           tagline_ar: string
           target_screen: string
+          thumbnail_image_url: string | null
           world: string | null
         }
         Insert: {
           accent_color?: string
           base_xp?: number
           category: string
+          cover_image_url?: string | null
           icon_key?: string
           id: string
           is_active?: boolean
           is_coming_soon?: boolean
           is_featured?: boolean
+          is_multiplayer?: boolean
+          is_new?: boolean
           name: string
           name_ar: string
           sort_order?: number
@@ -1307,17 +1347,21 @@ export type Database = {
           tagline?: string
           tagline_ar?: string
           target_screen: string
+          thumbnail_image_url?: string | null
           world?: string | null
         }
         Update: {
           accent_color?: string
           base_xp?: number
           category?: string
+          cover_image_url?: string | null
           icon_key?: string
           id?: string
           is_active?: boolean
           is_coming_soon?: boolean
           is_featured?: boolean
+          is_multiplayer?: boolean
+          is_new?: boolean
           name?: string
           name_ar?: string
           sort_order?: number
@@ -1325,7 +1369,26 @@ export type Database = {
           tagline?: string
           tagline_ar?: string
           target_screen?: string
+          thumbnail_image_url?: string | null
           world?: string | null
+        }
+        Relationships: []
+      }
+      user_favorite_games: {
+        Row: {
+          created_at: string
+          game_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          game_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          game_id?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -1418,6 +1481,7 @@ export type Database = {
           equipped_frame_id: string | null
           equipped_title_id: string | null
           equipped_decoration_id: string | null
+          header_url: string | null
           id: string
           is_online: boolean
           last_active_week: string | null
@@ -1448,6 +1512,7 @@ export type Database = {
           equipped_frame_id?: string | null
           equipped_title_id?: string | null
           equipped_decoration_id?: string | null
+          header_url?: string | null
           id: string
           is_online?: boolean
           last_active_week?: string | null
@@ -1478,6 +1543,7 @@ export type Database = {
           equipped_frame_id?: string | null
           equipped_title_id?: string | null
           equipped_decoration_id?: string | null
+          header_url?: string | null
           id?: string
           is_online?: boolean
           last_active_week?: string | null

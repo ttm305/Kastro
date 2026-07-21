@@ -17,6 +17,7 @@ import {
   createBoardGameRoom, joinBoardGameRoomByCode, quickMatchBoardGame, joinBoardGameSpectator,
   leaveBoardGameSpectator, leaveBoardGameRoom, getSpectatableBoardGameRooms, type BoardGameRoom,
   getMyBoardGameHistory, getBoardGameMatchDetail, type BoardGameHistoryEntry, type BoardGameMatchDetail,
+  submitLudoMove, finalizeLudoMatch, checkLudoTimeout, getActiveLudoMatch, forfeitLudoMatch, type ActiveLudoMatch,
 } from '../lib/api'
 import MatchChat from '../components/boardgames/MatchChat'
 
@@ -66,6 +67,29 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
   const [spectateRoomId, setSpectateRoomId] = useState<string | null>(null)
   const [replayRoomId, setReplayRoomId] = useState<string | null>(null)
 
+  // Resume-active-match: checked whenever the player lands on a screen where
+  // starting something NEW would be a mistake if they already have a match
+  // in flight (setup, online-menu, online-lobby). get_active_ludo_match also
+  // resolves any timeout that expired while nobody was looking, so this can
+  // legitimately come back null even for a match that *was* active a moment
+  // ago (elimination) or come back with a lower turn_deadline than expected.
+  const [activeMatch, setActiveMatch] = useState<ActiveLudoMatch | null>(null)
+  useEffect(() => {
+    if (!userId) return
+    if (phase !== 'setup' && phase !== 'online-menu' && phase !== 'online-lobby') return
+    let cancelled = false
+    getActiveLudoMatch().then((m) => { if (!cancelled) setActiveMatch(m) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, phase])
+
+  const resumeActiveMatch = () => {
+    if (!activeMatch) return
+    primeSound()
+    setOnlineRoomId(activeMatch.room_id)
+    setPhase('online-play')
+  }
+
   const seats: BoardGameSeat[] = useMemo(() => {
     return Array.from({ length: numPlayers }, (_, i) => {
       const cfg = seatConfigs[i]
@@ -103,7 +127,8 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
       setOnlineRoomId(null); setPhase('online-menu'); return
     }
     if (phase === 'online-play') {
-      if (onlineRoomId) leaveBoardGameRoom(onlineRoomId).catch(() => {})
+      // Not a real "leave" — see the OnlineLudoMatch onExit comment below.
+      // The room/seat must survive so Resume Match can find it again.
       setOnlineRoomId(null); setPhase('online-menu'); return
     }
     if (phase === 'online-spectate') {
@@ -145,6 +170,36 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
           </button>
         )}
       </div>
+
+      {activeMatch && (phase === 'setup' || phase === 'online-menu' || phase === 'online-lobby') && (
+        <div style={{ padding: '0 16px', maxWidth: 480, margin: '0 auto 14px' }}>
+          <style>{`@keyframes ludoResumePulse { 0%,100% { box-shadow: 0 0 0 0 rgba(46,213,115,0.35); } 50% { box-shadow: 0 0 0 8px rgba(46,213,115,0); } }`}</style>
+          <div style={{
+            padding: '14px 16px', borderRadius: 16, border: '1.5px solid rgba(46,213,115,0.4)',
+            background: 'linear-gradient(135deg, rgba(46,213,115,0.14), rgba(46,213,115,0.05))',
+            display: 'flex', alignItems: 'center', gap: 12, animation: 'ludoResumePulse 2.2s ease-in-out infinite',
+          }}>
+            <span style={{ fontSize: 22 }}>🎲</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: 'var(--foreground)' }}>
+                {isAr ? 'يوجد مباراة نشطة' : 'Active match found'}
+              </p>
+              <p style={{ margin: '2px 0 0', fontSize: 11.5, color: 'rgba(var(--fg2-rgb),0.55)' }}>
+                {isAr ? 'لديك مباراة لودو لم تنته بعد' : 'You have an unfinished Ludo match'}
+              </p>
+            </div>
+            <button
+              onClick={resumeActiveMatch}
+              style={{
+                background: '#2ed573', border: 'none', borderRadius: 12, padding: '9px 16px',
+                fontSize: 12.5, fontWeight: 800, color: '#06210f', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {isAr ? 'استئناف المباراة' : 'Resume Match'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <style>{`@keyframes ludoPhaseFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
       <div key={phase} style={{ animation: 'ludoPhaseFadeIn 260ms ease-out' }}>
@@ -190,7 +245,12 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
           roomId={onlineRoomId}
           userId={userId}
           isAr={isAr}
-          onExit={() => { leaveBoardGameRoom(onlineRoomId).catch(() => {}); setOnlineRoomId(null); setPhase('online-menu') }}
+          // Deliberately NOT calling leaveBoardGameRoom here — this is a
+          // mid-match exit, not actually leaving the game. The room/seat
+          // must survive so get_active_ludo_match can find it again and
+          // offer Resume Match. Only the pre-start lobby (above) and the
+          // spectator flow (below) treat "exit" as "leave" for real.
+          onExit={() => { setOnlineRoomId(null); setPhase('online-menu') }}
         />
       )}
 
@@ -739,11 +799,19 @@ function LudoOnlineLobby({ isAr, roomId, userId, myName, onMatchStart, onExit }:
         </p>
       )}
 
+      {/* Pre-match lobby only (room.status is still 'waiting' here) — leaving
+          never counts as a loss or a win for anyone: leave_board_game_room
+          only ever touches left_at/host reassignment while status='waiting',
+          it never writes eliminated_at, final_rank, or any reward. Host and
+          guest get distinct labels for clarity; the underlying action is the
+          same safe pre-match leave either way. Once the match actually
+          starts, this screen is gone — Forfeit Match (above) is the only
+          "give up" action from then on. */}
       <button
         onClick={() => { leave(); onExit() }}
         style={{ width: '100%', padding: '11px 0', borderRadius: 14, border: '1px solid rgba(var(--fg-rgb),0.1)', background: 'transparent', color: 'rgba(var(--fg2-rgb),0.6)', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
       >
-        {isAr ? 'مغادرة الغرفة' : 'Leave Room'}
+        {isHost ? (isAr ? 'إلغاء الغرفة' : 'Cancel Room') : (isAr ? 'مغادرة الغرفة' : 'Leave Room')}
       </button>
 
       {countdown !== null && (
@@ -809,8 +877,21 @@ function LudoMatch({ seats, ais, isAr, onExit }: { seats: BoardGameSeat[]; ais: 
 function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; userId: string; isAr: boolean; onExit: () => void }) {
   const {
     loading, room, seats, state, currentSeatIndex, currentSeat, mySeatIndex, isMyTurn,
-    validMoves, events, result, spectatorCount, turnTimeLeftMs, submitMove,
-  } = useOnlineBoardGame({ engine: LudoEngine, roomId, userId })
+    validMoves, events, result, spectatorCount, turnTimeLeftMs, submitMove, forfeit,
+  } = useOnlineBoardGame({
+    engine: LudoEngine, roomId, userId,
+    // Ludo is server-authoritative: the client only ever sends an intent
+    // ({"type":"roll"} / {"type":"move","pieceId":...} / {"type":"pass"});
+    // the server rolls the die, validates the move, and computes the
+    // resulting state. See ludo_submit_move / finalize_ludo_match.
+    serverSubmitMove: submitLudoMove,
+    serverFinalize: finalizeLudoMatch,
+    // Server-side turn-timer watchdog — see checkLudoTimeout / onlineController's
+    // serverCheckTimeout. Neither player's own device is relied on for this.
+    serverCheckTimeout: checkLudoTimeout,
+    // Real "give up now" action — server-authoritative, see forfeitLudoMatch.
+    serverForfeit: forfeitLudoMatch,
+  })
 
   const [toast, setToast] = useState<{ text: string; kind: 'in' | 'out' } | null>(null)
   const prevConnRef = useRef<Map<number, boolean>>(new Map())
@@ -863,6 +944,8 @@ function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; use
         spectatorCount={spectatorCount}
         onMove={(m) => submitMove(m)}
         onExit={onExit}
+        onForfeit={forfeit}
+        canForfeit={mySeatIndex !== null && !result}
       />
       {toast && (
         <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 9250, pointerEvents: 'none' }}>
@@ -886,7 +969,11 @@ function OnlineLudoMatch({ roomId, userId, isAr, onExit }: { roomId: string; use
 function LudoSpectateMatch({ roomId, userId, isAr, onExit }: { roomId: string; userId: string; isAr: boolean; onExit: () => void }) {
   const {
     loading, room, seats, state, currentSeatIndex, currentSeat, validMoves, events, result, spectatorCount, turnTimeLeftMs,
-  } = useOnlineBoardGame({ engine: LudoEngine, roomId, userId: userId || 'spectator', autoJoinAsPlayer: false })
+  } = useOnlineBoardGame({
+    engine: LudoEngine, roomId, userId: userId || 'spectator', autoJoinAsPlayer: false,
+    serverFinalize: finalizeLudoMatch,
+    serverCheckTimeout: checkLudoTimeout,
+  })
 
   if (loading || !state) {
     return <div style={{ padding: 60, textAlign: 'center', color: 'rgba(var(--fg2-rgb),0.5)', fontSize: 13 }}>{isAr ? 'جارٍ الاتصال...' : 'Connecting…'}</div>
@@ -941,6 +1028,7 @@ const BASE_SEAT_ORDER = [0, 1, 2, 3]
 function LudoBoard({
   seats, state, currentSeatIndex, currentSeat, validMoves, events, result, isMyTurn, meSeatIndex, isAr, onMove, onExit,
   online = false, spectating = false, turnTimeLeftMs = null, turnTimerTotalMs = null, spectatorCount = 0, modeLabel,
+  onForfeit, canForfeit = false,
 }: {
   seats: OnlineSeatLike[]
   state: LudoState
@@ -961,7 +1049,13 @@ function LudoBoard({
   spectatorCount?: number
   /** Overrides the default "Spectating" badge text — used by the replay viewer to say "Replay" instead. */
   modeLabel?: string
+  /** Real "give up now" action (Ludo online only) — see forfeitLudoMatch. Omitted for local/spectate/replay. */
+  onForfeit?: () => void
+  /** Whether the Forfeit Match option should be shown at all — a seated online player, mid-match, not already finished. */
+  canForfeit?: boolean
 }) {
+  const [showMatchMenu, setShowMatchMenu] = useState(false)
+  const [showForfeitConfirm, setShowForfeitConfirm] = useState(false)
   const [rolling, setRolling] = useState(false)
   const [displayDice, setDisplayDice] = useState<number | null>(null)
   const [bursts, setBursts] = useState<{ id: number; x: number; y: number; colors: string[] }[]>([])
@@ -980,11 +1074,67 @@ function LudoBoard({
     if (currentSeatIndex !== null) setLastActiveSeat(currentSeatIndex)
   }, [currentSeatIndex])
 
+  // Required on-screen rule messages: why an extra roll was granted ("Rolled
+  // 6" / "Captured opponent"), the three-sixes forfeit, and "No legal move" —
+  // driven off the exact same server-authoritative (or local-engine) event
+  // stream everything else below already reacts to, so there's no separate
+  // source of truth to desync from.
+  const [ruleMessage, setRuleMessage] = useState<{ text: string; kind: 'info' | 'warn' } | null>(null)
+  useEffect(() => {
+    if (!ruleMessage) return
+    const t = setTimeout(() => setRuleMessage(null), 2600)
+    return () => clearTimeout(t)
+  }, [ruleMessage])
+
   // Ludo's own event → sound/animation mapping — none of these reuse the
   // quiz games' correct/wrong/win cues; see lib/boardgames/ludo/sound.ts.
   useEffect(() => {
     const last = events[events.length - 1]
     if (!last) return
+    if (last.type === 'diceRolled' && last.value === 6) {
+      setRuleMessage({ text: isAr ? '🎲 حصلت على 6 — رمية إضافية!' : '🎲 Rolled a 6 — extra roll!', kind: 'info' })
+    }
+    if (last.type === 'pieceCaptured') {
+      setRuleMessage({ text: isAr ? '💥 أسرت قطعة الخصم — رمية إضافية!' : '💥 Captured opponent — extra roll!', kind: 'info' })
+    }
+    if (last.type === 'threeSixesForfeit') {
+      setRuleMessage({ text: isAr ? '⚠ ثلاث سداسيات متتالية — خسرت الدور.' : '⚠ Three consecutive sixes — turn lost.', kind: 'warn' })
+    }
+    if (last.type === 'noMovesAvailable') {
+      setRuleMessage({ text: isAr ? '🚫 لا توجد حركة قانونية' : '🚫 No legal move', kind: 'warn' })
+    }
+    // Server-resolved turn timeout / elimination — see private.ludo_resolve_expired_turns.
+    // These never depend on the timed-out player's own device: whichever
+    // client is open (either player's) receives them from checkLudoTimeout
+    // or from the events bundled into its own next move.
+    if (last.type === 'turnMissed') {
+      const isMe = (last.seatIndex as number) === meSeatIndex
+      setRuleMessage({
+        text: isMe ? (isAr ? '⏱ فاتك دورك' : '⏱ Turn missed') : (isAr ? '⏱ فات خصمك دوره' : "⏱ Opponent missed their turn"),
+        kind: 'warn',
+      })
+    }
+    if (last.type === 'playerEliminated' && (last.seatIndex as number) === meSeatIndex) {
+      setRuleMessage({ text: isAr ? '❌ تم إقصاؤك بعد تفويت 3 أدوار متتالية' : '❌ Eliminated after missing 3 turns', kind: 'warn' })
+    }
+    if (last.type === 'gameOver' && last.reason === 'forfeit' && last.winnerSeatIndex === meSeatIndex && meSeatIndex !== null) {
+      setRuleMessage({ text: isAr ? '🏆 انسحب الخصم — أنت الفائز' : '🏆 Opponent eliminated — You win', kind: 'info' })
+    }
+    // Voluntary Forfeit Match action (distinct from the missed-turns
+    // elimination above) — see forfeit_ludo_match. 'playerForfeited' fires
+    // for the forfeiting seat's own device; the paired 'gameOver'
+    // reason:'player_forfeit' event fires the winner's message on the
+    // opponent's device.
+    if (last.type === 'playerForfeited') {
+      const isMe = (last.seatIndex as number) === meSeatIndex
+      setRuleMessage({
+        text: isMe ? (isAr ? '🏳 لقد انسحبت من المباراة.' : '🏳 You forfeited the match.') : (isAr ? '⚠ انسحب الخصم من المباراة.' : '⚠ Opponent forfeited the match.'),
+        kind: 'warn',
+      })
+    }
+    if (last.type === 'gameOver' && last.reason === 'player_forfeit' && last.winnerSeatIndex === meSeatIndex && meSeatIndex !== null) {
+      setRuleMessage({ text: isAr ? '🏆 انسحب الخصم — أنت الفائز' : '🏆 Opponent forfeited — You win', kind: 'info' })
+    }
     if (last.type === 'diceRolled') {
       setRolling(true)
       let ticks = 0
@@ -1020,8 +1170,18 @@ function LudoBoard({
     if (last.type === 'pieceHome') ludoSound.pieceHome()
     if (last.type === 'seatFinished') ludoSound.seatFinished()
     if (last.type === 'gameOver') ludoSound.victory()
-    if (last.type === 'noMovesAvailable' || last.type === 'threeSixesForfeit') ludoSound.turnPass()
+    if (last.type === 'noMovesAvailable' || last.type === 'threeSixesForfeit' || last.type === 'turnMissed') ludoSound.turnPass()
   }, [events])
+
+  // "Your turn" — fires once per transition into isMyTurn (never on mount,
+  // so joining a match that's already your turn doesn't spam a toast).
+  const wasMyTurnRef = useRef(isMyTurn)
+  useEffect(() => {
+    if (isMyTurn && !wasMyTurnRef.current && !result) {
+      setRuleMessage({ text: isAr ? '🎯 دورك الآن' : '🎯 Your turn', kind: 'info' })
+    }
+    wasMyTurnRef.current = isMyTurn
+  }, [isMyTurn, result, isAr])
 
   const movablePieceIds = useMemo(() => new Set(validMoves.filter((m): m is Extract<LudoMove, { type: 'move' }> => m.type === 'move').map((m) => m.pieceId)), [validMoves])
   const canRoll = isMyTurn && validMoves.length === 1 && validMoves[0]?.type === 'roll'
@@ -1030,8 +1190,8 @@ function LudoBoard({
 
   return (
     <div style={{ padding: '4px 14px 0', maxWidth: 520, margin: '0 auto', fontFamily: "'Exo 2', 'Cairo', sans-serif" }}>
-      {online && (spectatorCount > 0 || spectating || modeLabel) && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 6 }}>
+      {online && (spectatorCount > 0 || spectating || modeLabel || canForfeit) && (
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 6 }}>
           {spectatorCount > 0 && (
             <span key={spectatorCount} style={{ fontSize: 11, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.45)', animation: 'ludoSpectatorPop 350ms cubic-bezier(0.34,1.56,0.64,1)' }}>
               <style>{`@keyframes ludoSpectatorPop { 0% { transform: scale(1.5); opacity: 0.4; } 100% { transform: scale(1); opacity: 1; } }`}</style>
@@ -1041,6 +1201,71 @@ function LudoBoard({
           {(spectating || modeLabel) && (
             <span style={{ fontSize: 11, fontWeight: 700, color: '#9d6fff' }}>{modeLabel ?? (isAr ? 'وضع المشاهدة' : 'Spectating')}</span>
           )}
+          {canForfeit && onForfeit && (
+            <div style={{ position: 'absolute', insetInlineEnd: 0, top: -2 }}>
+              <button
+                onClick={() => setShowMatchMenu((v) => !v)}
+                aria-label={isAr ? 'خيارات المباراة' : 'Match options'}
+                style={{
+                  width: 30, height: 30, borderRadius: 10, border: '1px solid rgba(var(--fg-rgb),0.12)',
+                  background: 'rgba(var(--fg-rgb),0.05)', color: 'var(--foreground)', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 900, lineHeight: 1,
+                }}
+              >
+                ⋮
+              </button>
+              {showMatchMenu && (
+                <>
+                  <div onClick={() => setShowMatchMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 9299 }} />
+                  <div style={{
+                    position: 'absolute', top: 36, insetInlineEnd: 0, zIndex: 9300, minWidth: 168,
+                    background: 'rgba(20,18,38,0.98)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14,
+                    boxShadow: '0 12px 30px rgba(0,0,0,0.4)', overflow: 'hidden',
+                  }}>
+                    <button
+                      onClick={() => { setShowMatchMenu(false); setShowForfeitConfirm(true) }}
+                      style={{
+                        width: '100%', padding: '11px 14px', background: 'none', border: 'none', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 700, color: '#ff6b7a', textAlign: 'start',
+                      }}
+                    >
+                      🏳 {isAr ? 'الانسحاب من المباراة' : 'Forfeit Match'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showForfeitConfirm && onForfeit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(3,3,15,0.75)', backdropFilter: 'blur(4px)', zIndex: 9310, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div style={{
+            background: 'linear-gradient(165deg, rgba(24,22,46,0.98), rgba(13,13,31,0.99))', borderRadius: 20, padding: '22px 20px',
+            maxWidth: 320, width: '100%', border: '1px solid rgba(255,107,122,0.35)', boxShadow: '0 24px 60px rgba(0,0,0,0.5)', textAlign: 'center',
+          }}>
+            <p style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 800, color: '#fff' }}>
+              {isAr ? 'هل أنت متأكد من رغبتك في الانسحاب من هذه المباراة؟' : 'Are you sure you want to forfeit this match?'}
+            </p>
+            <p style={{ margin: '0 0 20px', fontSize: 12.5, color: 'rgba(255,255,255,0.55)' }}>
+              {isAr ? 'سيتم إعلان الخصم فائزًا.' : 'The opponent will be declared the winner.'}
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setShowForfeitConfirm(false)}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.04)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => { setShowForfeitConfirm(false); onForfeit() }}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, border: 'none', background: '#ff4757', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}
+              >
+                {isAr ? 'الانسحاب' : 'Forfeit'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1061,6 +1286,21 @@ function LudoBoard({
         turnSecondsLeft={!result ? turnSecondsLeft : null}
         turnTimerTotalMs={turnTimerTotalMs}
       />
+
+      {ruleMessage && (
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '2px 0 10px' }}>
+          <style>{`@keyframes ludoRuleMsgIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+          <span style={{
+            padding: '7px 14px', borderRadius: 99, fontSize: 12, fontWeight: 700, textAlign: 'center',
+            color: ruleMessage.kind === 'warn' ? '#ff4757' : '#8b5cf6',
+            background: ruleMessage.kind === 'warn' ? 'rgba(255,71,87,0.12)' : 'rgba(139,92,246,0.14)',
+            border: `1px solid ${ruleMessage.kind === 'warn' ? 'rgba(255,71,87,0.35)' : 'rgba(139,92,246,0.35)'}`,
+            animation: 'ludoRuleMsgIn 200ms ease-out',
+          }}>
+            {ruleMessage.text}
+          </span>
+        </div>
+      )}
 
       {/* Board stage — a deep glass tray the board "floats" in, premium-mobile-game treatment rather than a flat card */}
       <div style={{

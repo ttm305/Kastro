@@ -21,7 +21,10 @@ export type PublicProfile = {
   weekly_streak_count: number
   equipped_frame_id: string | null
   equipped_banner_id: string | null
+  equipped_title_id: string | null
+  equipped_decoration_id: string | null
   avatar_url: string | null
+  header_url: string | null
   is_online: boolean
   created_at: string
   bio: string | null
@@ -121,6 +124,24 @@ export async function getGameById(gameId: string): Promise<Pick<Game, 'name' | '
   const { data, error } = await supabase.from('games').select('name, name_ar, accent_color, base_xp').eq('id', gameId).maybeSingle()
   if (error) { logErr('getGameById', error); return null }
   return data
+}
+
+/** This player's hearted games, for the new image-first Games page. Own-row-only RLS (user_favorite_games_own). */
+export async function getFavoriteGameIds(userId: string): Promise<string[]> {
+  const { data, error } = await supabase.from('user_favorite_games').select('game_id').eq('user_id', userId)
+  if (error) { logErr('getFavoriteGameIds', error); return [] }
+  return (data ?? []).map((r) => r.game_id)
+}
+
+export async function toggleFavoriteGame(userId: string, gameId: string, favorite: boolean): Promise<{ error: string | null }> {
+  if (favorite) {
+    const { error } = await supabase.from('user_favorite_games').upsert({ user_id: userId, game_id: gameId })
+    if (error) { logErr('toggleFavoriteGame:add', error); return { error: error.message } }
+    return { error: null }
+  }
+  const { error } = await supabase.from('user_favorite_games').delete().eq('user_id', userId).eq('game_id', gameId)
+  if (error) { logErr('toggleFavoriteGame:remove', error); return { error: error.message } }
+  return { error: null }
 }
 
 // ---------------------------------------------------------------------------
@@ -502,8 +523,11 @@ export async function getLeaderboardV2(
   // that added it to get_public_profiles/get_leaderboard) — it just wasn't
   // declared in this cast, so it was silently dropped before ever reaching
   // LeaderboardScreen, which is why uploaded avatars rendered everywhere
-  // except the leaderboard.
-  return (data as { rank: number; user_id: string; username: string; points: number; level: number; streak_count: number; avatar_url: string | null }[] | null) ?? []
+  // except the leaderboard. equipped_banner_id/equipped_title_id/
+  // equipped_decoration_id are the same story for cosmetics — the RPC now
+  // returns them (see cosmetics_propagate_equipped_to_public_rpcs
+  // migration), they just weren't declared here.
+  return (data as { rank: number; user_id: string; username: string; points: number; level: number; streak_count: number; equipped_frame_id: string | null; equipped_banner_id: string | null; equipped_title_id: string | null; equipped_decoration_id: string | null; avatar_url: string | null }[] | null) ?? []
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,16 +1389,16 @@ export async function getMatchResults(roomId: string): Promise<{ room: MatchRoom
 }
 
 // ---------------------------------------------------------------------------
-// Profile editing — bio/branch_id/avatar_url are NOT among the fields the
-// profiles_guard_privileged trigger clamps (only role/xp/level/status/
-// login_count/access_code_id/username are), so a direct self-row update is
-// enough and already permitted by RLS (profiles_update_self_or_owner).
-// Username goes through the update_username RPC instead, since it IS
-// clamped and requires the server-side length/uniqueness rules.
+// Profile editing — bio/branch_id/avatar_url/header_url are NOT among the
+// fields the profiles_guard_privileged trigger clamps (only role/xp/level/
+// status/login_count/access_code_id/username are), so a direct self-row
+// update is enough and already permitted by RLS (profiles_update_self_or_
+// owner). Username goes through the update_username RPC instead, since it
+// IS clamped and requires the server-side length/uniqueness rules.
 // ---------------------------------------------------------------------------
 export async function updateProfile(
   userId: string,
-  patch: Partial<Pick<Profile, 'bio' | 'branch_id' | 'avatar_url'>>
+  patch: Partial<Pick<Profile, 'bio' | 'branch_id' | 'avatar_url' | 'header_url'>>
 ) {
   const { error } = await supabase.from('profiles').update(patch).eq('id', userId)
   return { error: error?.message ?? null }
@@ -1402,6 +1426,40 @@ export async function uploadAvatar(userId: string, blob: Blob): Promise<{ url: s
   if (uploadError) return { url: null, error: uploadError.message }
   const { data } = supabase.storage.from('avatars').getPublicUrl(path)
   return { url: data.publicUrl, error: null }
+}
+
+/**
+ * Uploads a cropped + compressed cover/header image (a single JPEG blob,
+ * already cropped and re-encoded client-side by HeaderPickerModal) to the
+ * public `profile-headers` Storage bucket. Unlike uploadAvatar's timestamped
+ * filenames, this always writes to the SAME fixed path per user
+ * (`{userId}/header.jpg`, upsert: true) — replacing a header overwrites the
+ * previous file in place instead of leaving it behind as orphaned storage,
+ * satisfying "replacing a header must delete or overwrite the previous
+ * file" without needing a separate list+delete round trip. Because the path
+ * never changes, a `?v=<timestamp>` cache-busting query string is appended
+ * to the returned URL so the new image is what actually gets displayed
+ * (and re-fetched by other users) instead of a stale cached copy at the
+ * same URL. Storage RLS only allows writing inside `{their own id}/...`,
+ * so this must always be called with the caller's own userId.
+ */
+export async function uploadHeader(userId: string, blob: Blob): Promise<{ url: string | null; error: string | null }> {
+  const path = `${userId}/header.jpg`
+  const { error: uploadError } = await supabase.storage.from('profile-headers').upload(path, blob, {
+    contentType: 'image/jpeg',
+    upsert: true,
+  })
+  if (uploadError) return { url: null, error: uploadError.message }
+  const { data } = supabase.storage.from('profile-headers').getPublicUrl(path)
+  return { url: `${data.publicUrl}?v=${Date.now()}`, error: null }
+}
+
+/** Deletes the caller's header file from Storage (if any) and clears profiles.header_url. Safe to call even if no header was ever uploaded. */
+export async function removeHeader(userId: string): Promise<{ error: string | null }> {
+  const { error: removeError } = await supabase.storage.from('profile-headers').remove([`${userId}/header.jpg`])
+  if (removeError) logErr('removeHeader (storage)', removeError)
+  const { error } = await updateProfile(userId, { header_url: null })
+  return { error }
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,6 +1607,117 @@ export async function finalizeBoardGame(
 ) {
   const { error } = await supabase.rpc('finalize_board_game', { p_room_id: roomId, p_rankings: rankings, p_scores: scores, p_meta: meta })
   return { error: error?.message ?? null }
+}
+
+/**
+ * Ludo's dedicated, server-authoritative move path — replaces
+ * submitBoardGameMove for this game. The client sends only an intent
+ * ({"type":"roll"} / {"type":"move","pieceId":"S:P"} / {"type":"pass"});
+ * the server rolls the die, validates turn ownership and move legality, and
+ * computes the resulting state itself (see migration
+ * 20260720120000_ludo_server_authoritative_engine.sql). The client never
+ * computes or sends board state.
+ */
+export interface LudoMoveResult {
+  room_id: string
+  state: unknown
+  version: number
+  updated_at: string
+  events: { type: string; [key: string]: unknown }[]
+}
+
+export async function submitLudoMove(roomId: string, expectedVersion: number, move: Record<string, unknown>) {
+  const { data, error } = await supabase.rpc('ludo_submit_move', {
+    p_room_id: roomId,
+    p_expected_version: expectedVersion,
+    p_move: move,
+  })
+  if (error) {
+    const conflict = error.code === '40001' || /stale state/i.test(error.message)
+    return { error: error.message, conflict, result: null }
+  }
+  return { error: null, conflict: false, result: (data as unknown as LudoMoveResult | null) ?? null }
+}
+
+/** Ludo's dedicated finalize path — rankings/scores/meta are derived entirely server-side from the authoritative board_game_state, never from client input. See finalize_ludo_match. */
+export async function finalizeLudoMatch(roomId: string) {
+  const { error } = await supabase.rpc('finalize_ludo_match', { p_room_id: roomId })
+  return { error: error?.message ?? null }
+}
+
+export interface LudoTimeoutCheckResult {
+  room_id: string
+  state: unknown
+  version: number
+  events: { type: string; [key: string]: unknown }[]
+  updated_at: string
+  turn_seat_index: number | null
+  turn_deadline_at: string | null
+  turn_started_at: string | null
+  status: string
+}
+
+/**
+ * The server-side turn-timer watchdog. Atomically resolves any already-
+ * expired turn (missed-turn increment, dice/move state cleared, turn
+ * advanced, possibly elimination/forfeit) before returning the current
+ * authoritative state — safe and cheap to call redundantly. The client
+ * calls this on mount, on tab focus/visibility, and on a short interval
+ * while an online Ludo match is open, so a stalled timer resolves the
+ * instant ANY participant's client is looking at the match — never
+ * dependent on the timed-out player's own device. See
+ * private.ludo_resolve_expired_turns / public.check_ludo_timeout.
+ */
+export async function checkLudoTimeout(roomId: string) {
+  const { data, error } = await supabase.rpc('check_ludo_timeout', { p_room_id: roomId })
+  if (error) return { error: error.message, result: null }
+  return { error: null, result: (data as unknown as LudoTimeoutCheckResult | null) ?? null }
+}
+
+export interface ActiveLudoMatch {
+  room_id: string
+  seat_index: number
+  turn_seat_index: number | null
+  turn_deadline_at: string | null
+  turn_timer_seconds: number
+}
+
+/**
+ * Finds any Ludo room where the caller is still an active, non-eliminated
+ * seated player — used to power the "Active match found — Resume Match"
+ * card on the Ludo entry screen. Returns null if there's nothing to
+ * resume (never started one, already finished, or eliminated). Also
+ * resolves any expired timeout on that room first, so a deadline that
+ * quietly ran out while the app was closed is reflected immediately
+ * (including eliminating the caller, if that's what actually happened).
+ */
+export async function getActiveLudoMatch() {
+  const { data, error } = await supabase.rpc('get_active_ludo_match')
+  if (error) { logErr('getActiveLudoMatch', error); return null }
+  return (data as unknown as ActiveLudoMatch | null) ?? null
+}
+
+export interface LudoForfeitResult {
+  room_id: string
+  state: unknown
+  version: number
+  updated_at: string
+  events: { type: string; [key: string]: unknown }[]
+  forfeited: boolean
+}
+
+/**
+ * Ends the match right now by forfeit — server-authoritative: the caller
+ * only asserts "I give up", the server verifies seat ownership, resolves
+ * any already-expired turn first, computes the winner from the remaining
+ * active seats, and finalizes rewards in the same transaction (idempotent,
+ * exactly-once — see finalize_board_game's status<>'completed' guard).
+ * The client never decides who wins. See forfeit_ludo_match.
+ */
+export async function forfeitLudoMatch(roomId: string) {
+  const { data, error } = await supabase.rpc('forfeit_ludo_match', { p_room_id: roomId })
+  if (error) return { error: error.message, result: null }
+  return { error: null, result: (data as unknown as LudoForfeitResult | null) ?? null }
 }
 
 export async function leaveBoardGameRoom(roomId: string) {

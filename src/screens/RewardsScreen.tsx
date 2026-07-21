@@ -3,6 +3,7 @@ import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import { useAuth } from '../lib/auth'
 import { getShopCatalog, purchaseCosmeticItem, getWeeklyCoinsEarned, equipCosmetic, type ShopItem, type EquipSlot } from '../lib/api'
+import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -61,28 +62,33 @@ function Toast({ msg, visible, color = '#00e676' }: { msg: string; visible: bool
 }
 
 function ItemPreviewVisual({ item, size = 88 }: { item: ShopItem; size?: number }) {
-  const style = (item.style as any) ?? {}
+  // Frame ring/glow and banner gradient-keyword translation now live in
+  // src/lib/cosmetics.ts — the single source of truth every screen that
+  // renders an equipped cosmetic shares, so the shop preview always matches
+  // what actually shows up equipped elsewhere in the app.
   if (item.type === 'frame') {
+    // Shop preview uses a 4px ring (vs. 3px everywhere a frame is actually
+    // equipped on a real avatar) purely for preview-tile legibility at this
+    // size, so it reads the same {ring, glow} fields cosmetics.ts does
+    // rather than calling frameAvatarStyle() directly.
+    const style = (item.style as any) ?? {}
+    const ring = style.ring ?? RARITY_META[item.rarity as Rarity]?.color ?? '#9d6fff'
     return (
-      <div style={{ width: size, height: size, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `4px solid ${style.ring ?? RARITY_META[item.rarity as Rarity]?.color ?? '#9d6fff'}`, boxShadow: style.glow ? `0 0 24px ${style.ring ?? '#9d6fff'}66` : 'none', background: 'rgba(var(--fg-rgb),0.05)' }}>
+      <div style={{ width: size, height: size, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `4px solid ${ring}`, boxShadow: style.glow ? `0 0 24px ${ring}66` : 'none', background: 'rgba(var(--fg-rgb),0.05)' }}>
         <span style={{ fontSize: size * 0.4 }}>{item.icon}</span>
       </div>
     )
   }
   if (item.type === 'banner') {
-    const gradients: Record<string, string> = {
-      'aurora-gradient': 'linear-gradient(135deg,#00e676,#7c3aed,#00d4ff)',
-      'tidal-gradient': 'linear-gradient(135deg,#00d4ff,#0d1a3d)',
-      'nebula-gradient': 'linear-gradient(135deg,#7c3aed,#ff4785,#0d0d28)',
-      'magma-gradient': 'linear-gradient(135deg,#ff6b35,#7c1d1d,#0d0d28)',
-      'void-gradient': 'linear-gradient(135deg,#1a0a3d,#03030f,#7c3aed)',
-      'cosmic-gradient': 'linear-gradient(135deg,#0d0d28,#1a0a3d,#0d1a3d)',
-      'fire-gradient': 'linear-gradient(135deg,#ff6b35,#7c1d1d)',
-      'ocean-gradient': 'linear-gradient(135deg,#00d4ff,#0d1a3d)',
-    }
+    // Live preview: if the item is a real animated banner, this actually
+    // plays the loop (muted, autoplay) right in the shop tile — requirement
+    // (6) "show a small live preview in the Shop" — via the same component
+    // every equipped-banner surface in the app uses, so what a player sees
+    // here before buying is exactly what they'll see once equipped.
     return (
-      <div style={{ width: size * 1.6, height: size, borderRadius: 16, background: gradients[style.bg] ?? 'linear-gradient(135deg,#0d0d28,#1a0a3d)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
-        <span style={{ fontSize: size * 0.35 }}>{item.icon}</span>
+      <div style={{ width: size * 1.6, height: size, borderRadius: 16, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
+        <CosmeticBannerLayer banner={item} fallbackGradient="linear-gradient(135deg,#0d0d28,#1a0a3d)" />
+        <span style={{ position: 'relative', zIndex: 1, fontSize: size * 0.35, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.5))' }}>{item.icon}</span>
       </div>
     )
   }

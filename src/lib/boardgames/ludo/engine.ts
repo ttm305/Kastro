@@ -217,16 +217,32 @@ export const LudoEngine: BoardGameEngine<LudoState, LudoMove> = {
     events.push({ type: 'pieceMoved', seatIndex, pieceId: move.pieceId, from: fromBase ? -1 : piece.pathPos - dice, to: piece.pathPos })
 
     // Capture check — only on the shared ring, never in a home stretch, and
-    // never on a safe cell.
+    // never on a safe cell. Opposing pieces are grouped by seat first: two
+    // (or more) of the SAME opponent's pieces sharing this cell form a
+    // protected pair — they cannot be captured, though the rest of this
+    // move's landing still succeeds and other seats' single pieces on the
+    // same cell are still captured normally. This is deliberately NOT the
+    // traditional Ludo "block" rule: a protected pair never prevented this
+    // piece from landing here or from moving through the cell earlier in
+    // its path — only capture is suppressed.
     const landedCell = globalRingCell(seatIndex, piece.pathPos)
     const piecesLostCount = { ...state.piecesLostCount }
     if (landedCell !== null && !SAFE_CELLS.has(landedCell)) {
+      const byOpponentSeat = new Map<number, LudoPiece[]>()
       for (const other of pieces) {
         if (other.seatIndex === seatIndex) continue
         if (globalRingCell(other.seatIndex, other.pathPos) === landedCell) {
+          const group = byOpponentSeat.get(other.seatIndex) ?? []
+          group.push(other)
+          byOpponentSeat.set(other.seatIndex, group)
+        }
+      }
+      for (const [otherSeatIndex, group] of byOpponentSeat) {
+        if (group.length >= 2) continue // protected pair — immune to capture
+        for (const other of group) {
           other.pathPos = -1
-          piecesLostCount[other.seatIndex] = (piecesLostCount[other.seatIndex] ?? 0) + 1
-          events.push({ type: 'pieceCaptured', capturedSeatIndex: other.seatIndex, byPieceId: move.pieceId, atCell: landedCell })
+          piecesLostCount[otherSeatIndex] = (piecesLostCount[otherSeatIndex] ?? 0) + 1
+          events.push({ type: 'pieceCaptured', capturedSeatIndex: otherSeatIndex, byPieceId: move.pieceId, atCell: landedCell })
         }
       }
     }

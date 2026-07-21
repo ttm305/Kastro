@@ -18,6 +18,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { Screen, Lang } from '../App'
 import Avatar from '../components/Avatar'
+import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 import { supabase } from '../lib/supabaseClient'
 import type { Tables } from '../lib/database.types'
 import { getActiveSeason } from '../lib/api'
@@ -66,6 +67,8 @@ import {
   adminUpsertGame,
   adminSetGameActive,
   adminDeleteGame,
+  adminUploadGameCover,
+  adminReorderGames,
   adminUpsertAchievement,
   adminDeleteAchievement,
   adminGetAllTournaments,
@@ -85,6 +88,7 @@ import {
   adminUpsertCosmeticItem,
   adminSetCosmeticAvailable,
   adminDeleteCosmeticItem,
+  adminUploadCosmeticMedia,
   GENERIC_ADMIN_ERROR,
 } from '../lib/adminApi'
 
@@ -2164,7 +2168,34 @@ function ContentTab({ lang }: { lang:Lang }) {
 // ── Content: Games ──────────────────────────────────────────────────────────
 
 function emptyGameForm(): GameFull {
-  return { id:'', name:'', name_ar:'', category:'work', target_screen:'workgame', icon_key:'', accent_color:'#9d6fff', tagline:'', tagline_ar:'', base_xp:50, tag:null, world:null, sort_order:0, is_active:true, is_featured:false, is_coming_soon:true }
+  return { id:'', name:'', name_ar:'', category:'work', target_screen:'workgame', icon_key:'', accent_color:'#9d6fff', tagline:'', tagline_ar:'', base_xp:50, tag:null, world:null, sort_order:0, is_active:true, is_featured:false, is_coming_soon:true, is_new:false, is_multiplayer:false, cover_image_url:null, thumbnail_image_url:null }
+}
+
+const GAME_CATEGORIES = ['work','card','board','puzzle','quick'] as const
+
+/** Center-crops+resizes an uploaded image file to a fixed landscape cover size and JPEG-compresses it, entirely client-side (same canvas-based approach as the profile header uploader, minus the interactive reposition UI — a straightforward center-crop is enough for admin-authored cover art). */
+function resizeImageToCoverBlob(file: File, targetW = 900, targetH = 600, quality = 0.86): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      const canvas = document.createElement('canvas')
+      canvas.width = targetW
+      canvas.height = targetH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { reject(new Error('canvas unavailable')); return }
+      const srcRatio = img.width / img.height
+      const dstRatio = targetW / targetH
+      let sx = 0, sy = 0, sw = img.width, sh = img.height
+      if (srcRatio > dstRatio) { sw = img.height * dstRatio; sx = (img.width - sw) / 2 }
+      else { sh = img.width / dstRatio; sy = (img.height - sh) / 2 }
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH)
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('toBlob failed')), 'image/jpeg', quality)
+    }
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('image load failed')) }
+    img.src = objectUrl
+  })
 }
 
 function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFull[]; refetch:()=>Promise<void>; flash:(m:string,c?:string)=>void }) {
@@ -2172,6 +2203,7 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
   const [form, setForm] = useState<GameFull|null>(null)
   const [isNew, setIsNew] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [uploadingCover, setUploadingCover] = useState(false)
   const [del, setDel] = useState<GameFull|null>(null)
 
   const openNew = () => { setForm(emptyGameForm()); setIsNew(true) }
@@ -2208,28 +2240,71 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
     flash(ar?'تم حذف اللعبة':'Game deleted','#ff4785')
   }
 
+  // Move up/down within the visible list — same "swap + renumber sort_order
+  // by array position" pattern as the Branches tab's reorder().
+  const reorder = async (index:number, direction:-1|1) => {
+    const target = index + direction
+    if (target < 0 || target >= games.length) return
+    const next = [...games]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    setBusy(true)
+    const { error } = await adminReorderGames(next.map(g=>g.id))
+    setBusy(false)
+    if (error) { flash(describeAdminError(error, ar),'#ff4785'); return }
+    await refetch()
+  }
+
+  const pickCover = async (gameId: string, file: File | undefined) => {
+    if (!file) return
+    if (!['image/jpeg','image/png','image/webp'].includes(file.type)) { flash(ar?'يجب أن تكون الصورة JPEG أو PNG أو WebP':'Image must be JPEG, PNG, or WebP','#ff4785'); return }
+    if (file.size > 5 * 1024 * 1024) { flash(ar?'الحد الأقصى لحجم الصورة 5MB':'Image must be under 5MB','#ff4785'); return }
+    setUploadingCover(true)
+    try {
+      const blob = await resizeImageToCoverBlob(file)
+      const { url, error } = await adminUploadGameCover(gameId, blob)
+      if (error || !url) { flash(describeAdminError(error ?? GENERIC_ADMIN_ERROR, ar),'#ff4785'); return }
+      setForm(f => f && ({ ...f, cover_image_url: url, thumbnail_image_url: url }))
+      flash(ar?'تم رفع الغلاف':'Cover uploaded')
+    } catch {
+      flash(ar?'تعذر معالجة الصورة':'Could not process the image','#ff4785')
+    } finally {
+      setUploadingCover(false)
+    }
+  }
+
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
       <button style={{...S.primary,alignSelf:'flex-start'}} onClick={openNew}>+ {ar?'لعبة جديدة':'New Game'}</button>
 
       {games.length===0 && <Empty icon="🎮" title={ar?'لا توجد ألعاب بعد':'No games yet'} sub={ar?'المنصة جاهزة — أضف أول لعبة عندما تكون جاهزاً':'The platform is ready — add your first game whenever it exists'}/>}
 
-      {games.map(g=>(
+      {games.map((g,i)=>(
         <div key={g.id} style={{...S.card,display:'flex',gap:10,alignItems:'flex-start',opacity:g.is_active?1:0.55}}>
+          <div style={{width:52,height:38,borderRadius:8,flexShrink:0,overflow:'hidden',background:'rgba(var(--fg-rgb),0.06)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            {g.cover_image_url ? <img src={g.cover_image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontSize:16,opacity:0.35}}>🎮</span>}
+          </div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:4}}>
               <span style={{fontSize:14,fontWeight:700,color:'var(--foreground)'}}>{ar?g.name_ar:g.name}</span>
               <span style={{...S.pill,background:'rgba(157,111,255,0.12)',color:'#9d6fff'}}>{g.category}</span>
               {g.is_featured && <span style={{...S.pill,background:'rgba(255,215,0,0.12)',color:'#ffd700'}}>{ar?'مميزة':'Featured'}</span>}
+              {g.is_new && <span style={{...S.pill,background:'rgba(0,212,255,0.12)',color:'#00d4ff'}}>{ar?'جديدة':'New'}</span>}
+              {g.is_multiplayer && <span style={{...S.pill,background:'rgba(0,230,118,0.12)',color:'#00e676'}}>{ar?'متعدد اللاعبين':'Multiplayer'}</span>}
               {g.is_coming_soon && <span style={{...S.pill,background:'rgba(var(--fg-rgb),0.06)',color:'rgba(var(--fg2-rgb),0.5)'}}>{ar?'قريباً':'Coming Soon'}</span>}
               <span style={{...S.pill,background:g.is_active?'rgba(0,230,118,0.12)':'rgba(255,71,133,0.12)',color:g.is_active?'#00e676':'#ff4785'}}>{g.is_active?(ar?'مفعّلة':'Active'):(ar?'معطّلة':'Disabled')}</span>
             </div>
             <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{g.id} · {g.target_screen} · {g.base_xp} XP</div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>toggleActive(g)} title={g.is_active?'Disable':'Enable'}><IcoRefresh/></button>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>openEdit(g)}><IcoPencil/></button>
-            <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(g)}><IcoTrash/></button>
+          <div style={{display:'flex',flexDirection:'column',gap:4,flexShrink:0,alignItems:'flex-end'}}>
+            <div style={{display:'flex',gap:6}}>
+              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>toggleActive(g)} title={g.is_active?'Disable':'Enable'}><IcoRefresh/></button>
+              <button style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.5)',padding:4,display:'flex'}} onClick={()=>openEdit(g)}><IcoPencil/></button>
+              <button style={{background:'none',border:'none',cursor:'pointer',color:'#ff4785',padding:4,display:'flex'}} onClick={()=>setDel(g)}><IcoTrash/></button>
+            </div>
+            <div style={{display:'flex',gap:2}}>
+              <button style={{...S.ghost,padding:'4px 6px'}} disabled={busy||i===0} onClick={()=>reorder(i,-1)} title={ar?'تحريك لأعلى':'Move up'}><IcoUp/></button>
+              <button style={{...S.ghost,padding:'4px 6px'}} disabled={busy||i===games.length-1} onClick={()=>reorder(i,1)} title={ar?'تحريك لأسفل':'Move down'}><IcoDown2/></button>
+            </div>
           </div>
         </div>
       ))}
@@ -2241,6 +2316,21 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
             <div style={{fontSize:16,fontWeight:700,color:'var(--foreground)',marginBottom:18}}>{isNew?(ar?'لعبة جديدة':'New Game'):(ar?'تعديل اللعبة':'Edit Game')}</div>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
               <div>
+                <span style={S.label}>{ar?'صورة الغلاف':'Cover Artwork'}</span>
+                <div style={{display:'flex',alignItems:'center',gap:12}}>
+                  <div style={{width:96,height:64,borderRadius:10,overflow:'hidden',flexShrink:0,background:'rgba(var(--fg-rgb),0.06)',border:'1px solid rgba(var(--fg-rgb),0.08)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                    {form.cover_image_url ? <img src={form.cover_image_url} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <span style={{fontSize:22,opacity:0.3}}>🎮</span>}
+                  </div>
+                  <label style={{...S.ghost,cursor: isNew?'not-allowed':'pointer',fontSize:12,opacity:isNew?0.5:1}}>
+                    {uploadingCover ? (ar?'جارٍ الرفع…':'Uploading…') : (form.cover_image_url ? (ar?'استبدال':'Replace') : (ar?'رفع صورة':'Upload Image'))}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:'none'}} disabled={isNew||uploadingCover}
+                      onChange={e=>{ const file=e.target.files?.[0]; e.target.value=''; if(form) pickCover(form.id, file) }}/>
+                  </label>
+                </div>
+                {isNew && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginTop:6}}>{ar?'احفظ اللعبة أولاً، ثم عدّلها لرفع صورة الغلاف.':'Save the game first, then edit it to upload cover artwork.'}</div>}
+                {!form.cover_image_url && !isNew && <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)',marginTop:6}}>{ar?'بدون صورة، ستُعرض اللعبة بالرسم الافتراضي الحالي.':'Without an image, the game falls back to its existing built-in artwork.'}</div>}
+              </div>
+              <div>
                 <span style={S.label}>{ar?'المعرّف (id)':'ID (slug)'}</span>
                 <input style={S.input} placeholder="e.g. trivia_blitz" value={form.id} disabled={!isNew} onChange={e=>setForm(f=>f&&({...f,id:slugify(e.target.value)}))}/>
               </div>
@@ -2251,12 +2341,12 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
                 <div><span style={S.label}>{ar?'الفئة':'Category'}</span>
                   <select style={S.input} value={form.category} onChange={e=>setForm(f=>f&&({...f,category:e.target.value}))}>
-                    <option value="work">work</option><option value="casual">casual</option>
+                    {GAME_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div><span style={S.label}>{ar?'شاشة اللعب':'Target Screen'}</span>
                   <select style={S.input} value={form.target_screen} onChange={e=>setForm(f=>f&&({...f,target_screen:e.target.value}))}>
-                    <option value="workgame">workgame</option><option value="casualgame">casualgame</option>
+                    <option value="workgame">workgame</option><option value="casualgame">casualgame</option><option value="lobby">lobby</option>
                   </select>
                 </div>
               </div>
@@ -2272,11 +2362,13 @@ function GamesSection({ lang, games, refetch, flash }: { lang:Lang; games:GameFu
               <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>f&&({...f,is_active:e.target.checked}))}/>{ar?'مفعّلة':'Active'}</label>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_featured} onChange={e=>setForm(f=>f&&({...f,is_featured:e.target.checked}))}/>{ar?'مميزة':'Featured'}</label>
+                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_new} onChange={e=>setForm(f=>f&&({...f,is_new:e.target.checked}))}/>{ar?'جديدة':'New'}</label>
+                <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_multiplayer} onChange={e=>setForm(f=>f&&({...f,is_multiplayer:e.target.checked}))}/>{ar?'متعدد اللاعبين':'Multiplayer'}</label>
                 <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}><input type="checkbox" checked={form.is_coming_soon} onChange={e=>setForm(f=>f&&({...f,is_coming_soon:e.target.checked}))}/>{ar?'قريباً':'Coming Soon'}</label>
               </div>
               <div style={{display:'flex',gap:8,paddingTop:4}}>
                 <button style={{...S.ghost,flex:1,justifyContent:'center'}} onClick={()=>setForm(null)}>{ar?'إلغاء':'Cancel'}</button>
-                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy} onClick={save}>{ar?'حفظ':'Save'}</button>
+                <button style={{...S.primary,flex:1,justifyContent:'center'}} disabled={busy||uploadingCover} onClick={save}>{ar?'حفظ':'Save'}</button>
               </div>
             </div>
           </div>
@@ -2465,6 +2557,7 @@ function emptyCosmeticForm(): CosmeticItemFull {
     id:'', type:'frame', rarity:'common', label:'', label_ar:'', description:'', description_ar:'',
     icon:'🎁', price_coins:1000, is_available:true, seasonal_start:null, seasonal_end:null,
     sort_order:0, style:{}, unlock_criteria:{type:'purchase'},
+    media_type:'gradient', image_url:null, video_url:null, poster_url:null, is_animated:false,
   } as CosmeticItemFull
 }
 
@@ -2475,6 +2568,7 @@ function CosmeticsSection({ lang, items, refetch, flash }: { lang:Lang; items:Co
   const [busy, setBusy] = useState(false)
   const [del, setDel] = useState<CosmeticItemFull|null>(null)
   const [typeFilter, setTypeFilter] = useState<string>('all')
+  const [uploading, setUploading] = useState<'video'|'poster'|null>(null)
 
   const criteriaType = ((form?.unlock_criteria as any)?.type as string) || 'purchase'
   const setCriteriaType = (t:string) => setForm(f => f && ({ ...f, unlock_criteria: { type: t }, price_coins: t==='purchase' ? (f.price_coins ?? 1000) : null }))
@@ -2484,11 +2578,34 @@ function CosmeticsSection({ lang, items, refetch, flash }: { lang:Lang; items:Co
 
   const filtered = typeFilter==='all' ? items : items.filter(c=>c.type===typeFilter)
 
+  // Client-side backstop for requirement (6): never let an item be saved as
+  // "animated" without a real, working video asset — the DB has the same
+  // constraint (cosmetic_items_animated_requires_video), but catching it
+  // here gives an actual explanation instead of a raw Postgres error.
+  const handleMediaUpload = async (kind: 'video'|'poster', file: File) => {
+    if (!form) return
+    setUploading(kind)
+    const id = isNew ? slugify(form.id || form.label) : form.id
+    const { url, error } = await adminUploadCosmeticMedia(id, kind, file)
+    setUploading(null)
+    if (error || !url) { flash(describeAdminError(error ?? 'Upload failed', ar),'#ff4785'); return }
+    setForm(f => f && ({ ...f, [kind === 'video' ? 'video_url' : 'poster_url']: url }))
+    flash(ar?'تم رفع الملف':'File uploaded')
+  }
+
   const save = async () => {
     if (!form) return
     const id = isNew ? slugify(form.id || form.label) : form.id
     if (!id || !form.label.trim() || !form.label_ar.trim()) { flash(ar?'الاسم والمعرّف مطلوبان':'Name and ID are required','#ff4785'); return }
     if (criteriaType==='purchase' && (!form.price_coins || form.price_coins <= 0)) { flash(ar?'سعر الكوينز مطلوب للعناصر القابلة للشراء':'Coin price is required for purchasable items','#ff4785'); return }
+    if (form.is_animated && (!form.video_url?.trim() || !form.poster_url?.trim())) {
+      flash(ar?'لا يمكن تمييز العنصر كـ"متحرك" بدون رابط فيديو وصورة احتياطية صالحين':'Cannot mark this item Animated without a valid video URL and poster image','#ff4785')
+      return
+    }
+    if (form.media_type === 'video' && !form.video_url?.trim()) {
+      flash(ar?'رابط الفيديو مطلوب لنوع الوسائط "فيديو"':'Video URL is required when media type is Video','#ff4785')
+      return
+    }
     setBusy(true)
     const { error } = await adminUpsertCosmeticItem({
       ...form, id,
@@ -2608,6 +2725,67 @@ function CosmeticsSection({ lang, items, refetch, flash }: { lang:Lang; items:Co
                   <input style={S.input} type="datetime-local" value={toLocalInput(form.seasonal_end)} onChange={e=>setForm(f=>f&&({...f,seasonal_end:e.target.value?new Date(e.target.value).toISOString():null}))}/>
                 </div>
               </div>
+              {form.type === 'banner' && (
+                <div style={{display:'flex',flexDirection:'column',gap:10,padding:12,borderRadius:10,background:'rgba(var(--fg-rgb),0.03)',border:'1px solid rgba(var(--fg-rgb),0.08)'}}>
+                  <span style={S.label}>{ar?'نوع الوسائط (الخلفية)':'Media Type (Background)'}</span>
+                  <select
+                    style={S.input}
+                    value={form.media_type}
+                    onChange={e=>{
+                      const mt = e.target.value
+                      setForm(f=>f&&({...f, media_type:mt, is_animated: mt==='video' ? f.is_animated : false}))
+                    }}
+                  >
+                    <option value="gradient">{ar?'تدرج لوني (افتراضي)':'Gradient (default)'}</option>
+                    <option value="image">{ar?'صورة ثابتة':'Static Image'}</option>
+                    <option value="video">{ar?'فيديو متحرك':'Animated Video'}</option>
+                  </select>
+
+                  {form.media_type === 'image' && (
+                    <div>
+                      <span style={S.label}>{ar?'رابط الصورة':'Image URL'}</span>
+                      <input style={S.input} placeholder="https://..." value={form.image_url ?? ''} onChange={e=>setForm(f=>f&&({...f,image_url:e.target.value || null}))}/>
+                    </div>
+                  )}
+
+                  {form.media_type === 'video' && (
+                    <>
+                      <div>
+                        <span style={S.label}>{ar?'رابط الفيديو (mp4/webm)':'Video URL (mp4/webm)'}</span>
+                        <div style={{display:'flex',gap:6}}>
+                          <input style={{...S.input,flex:1}} placeholder="https://..." value={form.video_url ?? ''} onChange={e=>setForm(f=>f&&({...f,video_url:e.target.value || null}))}/>
+                          <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
+                            {uploading==='video' ? '…' : (ar?'رفع':'Upload')}
+                            <input type="file" accept="video/mp4,video/webm" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('video', f)}}/>
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <span style={S.label}>{ar?'الصورة الاحتياطية (poster)':'Poster Image (fallback)'}</span>
+                        <div style={{display:'flex',gap:6}}>
+                          <input style={{...S.input,flex:1}} placeholder="https://..." value={form.poster_url ?? ''} onChange={e=>setForm(f=>f&&({...f,poster_url:e.target.value || null}))}/>
+                          <label style={{...S.ghost,cursor:'pointer',display:'flex',alignItems:'center',whiteSpace:'nowrap'}}>
+                            {uploading==='poster' ? '…' : (ar?'رفع':'Upload')}
+                            <input type="file" accept="image/jpeg,image/png,image/webp" style={{display:'none'}} onChange={e=>{const f=e.target.files?.[0]; e.target.value=''; if(f) handleMediaUpload('poster', f)}}/>
+                          </label>
+                        </div>
+                      </div>
+                      <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}>
+                        <input type="checkbox" checked={form.is_animated} onChange={e=>setForm(f=>f&&({...f,is_animated:e.target.checked}))}/>
+                        {ar?'متحرك — يشغّل الفيديو فعلياً (يتطلب رابط فيديو + صورة احتياطية)':'Animated — actually plays the video (requires video URL + poster)'}
+                      </label>
+                      {/* Live preview — same component every equipped-banner surface in
+                          the app uses, so this is exactly what players will see. */}
+                      <div>
+                        <span style={S.label}>{ar?'معاينة حية':'Live Preview'}</span>
+                        <div style={{width:180,height:112,borderRadius:10,overflow:'hidden',position:'relative',border:'1px solid rgba(var(--fg-rgb),0.1)'}}>
+                          <CosmeticBannerLayer banner={form} fallbackGradient="linear-gradient(135deg,#0d0d28,#1a0a3d)" />
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',fontSize:12,color:'rgba(var(--fg2-rgb),0.65)'}}>
                 <input type="checkbox" checked={form.is_available} onChange={e=>setForm(f=>f&&({...f,is_available:e.target.checked}))}/>
                 {ar?'ظاهر في المتجر':'Visible in shop'}
