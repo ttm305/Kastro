@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Screen, Lang } from '../App'
 import { useAuth } from '../lib/auth'
 import { startGameSession, completeGameSession, getGameById } from '../lib/api'
+import { safeTop, safeLeft, safeRight, tapTarget } from '../lib/safeArea'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -176,10 +177,12 @@ export default function CasualGameScreen({ onNavigate, lang, gameId, context }: 
 
   return (
     <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <div className="glass" style={{ padding: '12px 16px' }}>
+      {/* Header — screen's own first element, same fix as WorkGameScreen's
+          twin header: was hardcoded '12px 16px' with no safe-area padding
+          and a sub-44px exit button. */}
+      <div className="glass" style={{ padding: '12px 16px', paddingTop: safeTop(12), paddingLeft: safeLeft(16), paddingRight: safeRight(16) }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <button onClick={() => onNavigate('games')} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: 'var(--foreground)' }}>
+          <button onClick={() => onNavigate('games')} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: 'var(--foreground)', ...tapTarget(34, 34) }}>
             ✕
           </button>
           <div style={{ textAlign: 'center' }}>

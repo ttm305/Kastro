@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, PointerEvent } from 'react'
 import type { Lang } from '../App'
 import { updateProfile, uploadHeader, removeHeader } from '../lib/api'
+import { safeTop, safeBottom, safeLeft, safeRight } from '../lib/safeArea'
 
 interface Props {
   lang: Lang
@@ -172,6 +173,8 @@ export default function HeaderPickerModal({ lang, userId, currentHeaderUrl, onCl
         position: 'fixed', inset: 0, zIndex: 9000,
         background: 'rgba(3,3,15,0.9)', backdropFilter: 'blur(16px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        paddingTop: safeTop(16), paddingBottom: safeBottom(16), paddingLeft: safeLeft(16), paddingRight: safeRight(16),
+        overflowY: 'auto',
       }}
     >
       <div

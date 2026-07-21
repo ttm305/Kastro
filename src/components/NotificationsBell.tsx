@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { Lang } from '../App'
 import { useAuth } from '../lib/auth'
+import { tapTarget } from '../lib/safeArea'
 import {
   getNotifications,
   getUnreadNotificationCount,
@@ -95,6 +96,10 @@ export default function NotificationsBell({ lang }: { lang: Lang }) {
           border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10,
           width: 38, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', color: 'rgba(var(--fg2-rgb),0.8)', position: 'relative',
+          // Visible box unchanged (38x38); clickable box padded to the 44x44
+          // minimum with an equal negative margin so it doesn't grow the
+          // header's layout.
+          ...tapTarget(38, 38),
         }}
       >
         <BellIcon />

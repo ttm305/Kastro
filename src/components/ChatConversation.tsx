@@ -18,6 +18,7 @@ import {
 } from '../lib/api'
 import { activeConversation, setActiveConversation } from '../lib/chatPresence'
 import { formatPresence } from '../lib/presenceFormat'
+import { safeTop, safeBottom, safeLeft, safeRight, tapTarget } from '../lib/safeArea'
 
 function timeShort(iso: string): string {
   const d = new Date(iso)
@@ -387,9 +388,15 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
           : { position: 'fixed', inset: 0, zIndex: 400, background: 'var(--background)', display: 'flex', flexDirection: 'column' }
       }
     >
-      {/* Header */}
-      <div className="glass" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: isPanel ? '10px 14px' : '14px 16px', flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, cursor: 'pointer', fontSize: 15, color: 'var(--foreground)' }}>
+      {/* Header — the full-screen variant (isPanel === false, used for the
+          standalone friend-chat route opened from FriendsScreen) is
+          `position: fixed, inset: 0` with nothing above it, so it needs its
+          own top/left/right safe-area padding same as any other full-screen
+          header; the embedded panel variant (used inside GameChatPanel)
+          lives inside an already-safe-area-padded parent, so it keeps its
+          flat padding. */}
+      <div className="glass" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: isPanel ? '10px 14px' : '14px 16px', paddingTop: isPanel ? undefined : safeTop(14), paddingLeft: isPanel ? undefined : safeLeft(16), paddingRight: isPanel ? undefined : safeRight(16), flexShrink: 0 }}>
+        <button onClick={onClose} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 15, color: 'var(--foreground)', ...tapTarget(34, 34) }}>
           {isPanel ? '✕' : (isAr ? '→' : '←')}
         </button>
         <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -495,8 +502,18 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
         </div>
       )}
 
-      {/* Composer */}
-      <div style={{ display: 'flex', gap: 8, padding: isPanel ? '8px 10px' : '10px 14px', borderTop: '1px solid rgba(var(--fg-rgb),0.08)', flexShrink: 0 }}>
+      {/* Composer — full-screen variant needs its own bottom/left/right
+          safe-area clearance (home indicator, landscape notch) since this
+          is the last element in a `position: fixed, inset: 0` screen with
+          no bottom nav below it. Panel variant sits inside GameChatPanel's
+          own safe-area-padded wrapper, so it's left alone. */}
+      <div style={{
+        display: 'flex', gap: 8, padding: isPanel ? '8px 10px' : '10px 14px',
+        paddingBottom: isPanel ? undefined : safeBottom(10),
+        paddingLeft: isPanel ? undefined : safeLeft(14),
+        paddingRight: isPanel ? undefined : safeRight(14),
+        borderTop: '1px solid rgba(var(--fg-rgb),0.08)', flexShrink: 0,
+      }}>
         <input
           type="text"
           value={input}

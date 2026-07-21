@@ -23,6 +23,7 @@ import { supabase } from '../lib/supabaseClient'
 import type { Tables } from '../lib/database.types'
 import { getActiveSeason } from '../lib/api'
 import { getDiagEntries, subscribeDiag, clearDiagEntries, type DiagEntry } from '../lib/diagnostics'
+import { safeTop, safeLeft, safeRight, tapTarget, tapTargetMinHeight } from '../lib/safeArea'
 import {
   adminGetOverviewStats,
   adminGetDau,
@@ -3467,14 +3468,17 @@ export default function AdminDashboardScreen({ onNavigate, lang, setLang, userEm
         @keyframes toast-in { from{opacity:0;transform:translate(-50%,8px)} to{opacity:1;transform:translate(-50%,0)} }
       `}</style>
 
-      {/* Top bar */}
-      <div style={{padding:'14px 16px 10px',background:'rgba(255,71,133,0.05)',borderBottom:'1px solid rgba(255,71,133,0.12)',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
-        <button onClick={()=>onNavigate('profile')} style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.55)',padding:4,display:'flex',borderRadius:6}}><IcoBack/></button>
+      {/* Top bar — was hardcoded '14px 16px 10px' with zero safe-area
+          handling, same unsafe pattern as the pre-fix Profile screen: on a
+          notched/Dynamic-Island phone the back button, "Admin Dashboard"
+          title and language toggle could all sit under the status bar. */}
+      <div style={{padding:'14px 16px 10px',paddingTop:safeTop(14),paddingLeft:safeLeft(16),paddingRight:safeRight(16),background:'rgba(255,71,133,0.05)',borderBottom:'1px solid rgba(255,71,133,0.12)',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+        <button onClick={()=>onNavigate('profile')} style={{background:'none',border:'none',cursor:'pointer',color:'rgba(var(--fg2-rgb),0.55)',padding:4,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:6,...tapTarget(28,28)}}><IcoBack/></button>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:14,fontWeight:800,color:'#ff4785',fontFamily:"'Exo 2',sans-serif",letterSpacing:0.5}}>{ar?'لوحة الإدارة':'Admin Dashboard'}</div>
           <div style={{fontSize:10,color:'rgba(var(--fg2-rgb),0.35)',marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{userEmail}</div>
         </div>
-        <button onClick={()=>setLang(lang==='en'?'ar':'en')} style={{background:'rgba(var(--fg-rgb),0.05)',border:'1px solid rgba(var(--fg-rgb),0.1)',borderRadius:6,padding:'5px 9px',color:'rgba(var(--fg2-rgb),0.6)',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0}}>
+        <button onClick={()=>setLang(lang==='en'?'ar':'en')} style={{background:'rgba(var(--fg-rgb),0.05)',border:'1px solid rgba(var(--fg-rgb),0.1)',borderRadius:6,padding:'5px 9px',color:'rgba(var(--fg2-rgb),0.6)',fontSize:11,fontWeight:700,cursor:'pointer',flexShrink:0,display:'inline-flex',alignItems:'center',justifyContent:'center',...tapTargetMinHeight(24)}}>
           {lang==='en'?'ع':'EN'}
         </button>
       </div>

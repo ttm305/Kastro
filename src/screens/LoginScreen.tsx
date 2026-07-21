@@ -5,6 +5,7 @@ import { OWNER_EMAIL } from '../App'
 import KastroLogo from '../components/KastroLogo'
 import { useAuth } from '../lib/auth'
 import { getBranches, type Branch } from '../lib/api'
+import { safeTop, safeLeft, safeRight, tapTargetMinHeight } from '../lib/safeArea'
 
 const DEFAULT_MIN_USERNAME_LEN = 3
 const MAX_USERNAME_LEN = 24
@@ -124,7 +125,10 @@ export default function LoginScreen({ onNavigate: _onNavigate, lang, setLang }: 
         minHeight: '100dvh',
         background: 'radial-gradient(ellipse 120% 80% at 20% 10%, rgba(124,58,237,0.22) 0%, transparent 60%), radial-gradient(ellipse 80% 60% at 80% 90%, rgba(0,212,255,0.14) 0%, transparent 55%), #03030f',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        padding: '24px 24px 48px', position: 'relative', overflow: 'hidden',
+        padding: '24px 24px 48px',
+        paddingBottom: 'max(48px, calc(24px + env(safe-area-inset-bottom, 0px)))',
+        paddingLeft: safeLeft(24), paddingRight: safeRight(24),
+        position: 'relative', overflow: 'hidden',
         // This screen's backdrop is intentionally always dark (a fixed
         // "space" brand treatment), regardless of the app-wide light/dark
         // toggle — but every input/label/helper-text color below reads
@@ -152,11 +156,19 @@ export default function LoginScreen({ onNavigate: _onNavigate, lang, setLang }: 
       <div style={{ position: 'absolute', top: -80, left: -60, width: 260, height: 260, background: 'radial-gradient(circle, rgba(124,58,237,0.18) 0%, transparent 70%)', borderRadius: '50%', pointerEvents: 'none' }} />
       <div style={{ position: 'absolute', bottom: -60, right: -40, width: 200, height: 200, background: 'radial-gradient(circle, rgba(0,212,255,0.12) 0%, transparent 70%)', borderRadius: '50%', pointerEvents: 'none' }} />
 
-      {/* Lang toggle */}
-      <div style={{ position: 'absolute', top: 20, right: 20 }}>
+      {/* Lang toggle — first screen most users ever see, so a notch overlap
+          here is maximally visible. Was a hardcoded `top: 20, right: 20`
+          with no safe-area awareness, same bug class as ProfileScreen's
+          Customize row. */}
+      <div style={{ position: 'absolute', top: safeTop(20), right: safeRight(20) }}>
         <button
           onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
-          style={{ background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.35)', borderRadius: 10, padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#9d6fff' }}
+          style={{
+            background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.35)', borderRadius: 10,
+            padding: '7px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#9d6fff',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            ...tapTargetMinHeight(30),
+          }}
         >
           {lang === 'en' ? 'عربي' : 'EN'}
         </button>

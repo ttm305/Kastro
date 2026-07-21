@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Lang } from '../App'
 import ChatConversation from './ChatConversation'
 import { getOrCreateConversation, getMyConversations } from '../lib/api'
+import { safeRight, safeLeft } from '../lib/safeArea'
 
 interface Props {
   /** The friend you're currently in a match with. Only ever called for confirmed friends — the generic board-game controller should not render this for non-friend opponents. */
@@ -69,9 +70,14 @@ export default function GameChatPanel({ opponentId, opponentUsername, opponentAv
         onClick={() => setOpen(true)}
         style={{
           position: 'fixed',
-          bottom: isDesktop ? 24 : 88,
-          right: isAr ? 'auto' : 20,
-          left: isAr ? 20 : 'auto',
+          // Mobile: was a flat 88 assuming a fixed-height bottom nav — the
+          // nav itself grows on a notched phone (env(safe-area-inset-bottom),
+          // see --bottom-nav-height in index.css), so this pins above the
+          // nav's REAL measured height instead of drifting under a taller
+          // one. Desktop has no bottom nav, so it keeps its flat offset.
+          bottom: isDesktop ? 24 : 'calc(var(--bottom-nav-height, 80px) + env(safe-area-inset-bottom, 0px) + 8px)',
+          right: isAr ? 'auto' : safeRight(20),
+          left: isAr ? safeLeft(20) : 'auto',
           zIndex: 250,
           width: 52, height: 52, borderRadius: '50%',
           background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
@@ -99,7 +105,7 @@ export default function GameChatPanel({ opponentId, opponentUsername, opponentAv
       style={
         isDesktop
           ? { position: 'fixed', bottom: 24, right: isAr ? 'auto' : 20, left: isAr ? 20 : 'auto', zIndex: 250, width: 340, height: 460 }
-          : { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 250, height: '55dvh' }
+          : { position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 250, height: '55dvh', paddingBottom: 'env(safe-area-inset-bottom, 0px)', boxSizing: 'border-box' }
       }
     >
       <ChatConversation

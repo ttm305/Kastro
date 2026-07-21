@@ -9,6 +9,7 @@ import Avatar from '../components/Avatar'
 import AvatarPickerModal from '../components/AvatarPickerModal'
 import HeaderPickerModal from '../components/HeaderPickerModal'
 import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
+import { safeTop, safeLeft, safeRight, tapTarget, tapTargetMinHeight } from '../lib/safeArea'
 import {
   getAchievementsWithStatus,
   getProfileStats,
@@ -606,7 +607,15 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
       {/* Save confirmation / error toast */}
       {toast && (
         <div style={{
-          position: 'fixed', bottom: 88, left: '50%', transform: 'translateX(-50%)',
+          position: 'fixed',
+          // Was a flat `88` assuming an 80px nav + a little clearance — on a
+          // notched phone the bottom nav itself grows by env(safe-area-inset-
+          // bottom) (see .pb-nav / --bottom-nav-height in index.css), so a
+          // fixed 88 could sit under the taller nav. Same measured-height +
+          // inset formula as .pb-nav keeps this pinned just above the nav on
+          // every device.
+          bottom: 'calc(var(--bottom-nav-height, 80px) + env(safe-area-inset-bottom, 0px) + 8px)',
+          left: '50%', transform: 'translateX(-50%)',
           background: toast.color ?? '#00e676', color: (toast.color ?? '#00e676') === '#00e676' ? '#03030f' : '#fff',
           padding: '9px 20px', borderRadius: 10, fontSize: 12, fontWeight: 700, zIndex: 9200,
           boxShadow: '0 4px 20px rgba(0,0,0,0.4)', animation: 'toast-in 0.25s ease-out',
@@ -622,7 +631,12 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
           onClick={() => setSelectedBadge(null)}
         >
           <div
-            style={{ width: '100%', maxWidth: 480, background: 'var(--surface-2)', borderRadius: '24px 24px 0 0', padding: '24px 20px 40px', border: '1px solid rgba(var(--fg-rgb),0.08)' }}
+            style={{
+              width: '100%', maxWidth: 480, background: 'var(--surface-2)', borderRadius: '24px 24px 0 0',
+              padding: '24px 20px 40px', paddingBottom: 'max(40px, calc(24px + env(safe-area-inset-bottom, 0px)))',
+              paddingLeft: safeLeft(20), paddingRight: safeRight(20),
+              border: '1px solid rgba(var(--fg-rgb),0.08)',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
@@ -683,21 +697,44 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
           <div className="bg-stars" style={{ position: 'absolute', inset: 0, opacity: 0.7 }} />
         )}
 
-        {/* Top controls */}
-        <div style={{ position: 'absolute', top: 14, left: 16, right: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
+        {/* Top controls — this row is the reported "Customize button" bug's
+            root cause: it's `position: absolute` inside the hero banner,
+            which is this screen's own first element (ProfileScreen doesn't
+            use the shared TopBar), so it used to sit at a hardcoded `top:
+            14` with no iOS safe-area awareness at all. On a notched/Dynamic-
+            Island phone that landed the row (and the Customize/language/
+            sign-out buttons in it) right under — or behind — the status
+            bar/notch. Same fix pattern as TopBar/GameHeader: `max(base,
+            env(safe-area-inset-*))` collapses to plain `base` with zero
+            extra space on non-notched devices, so nothing shifts on older
+            iPhones/Android/desktop. Horizontal insets guard the same row in
+            landscape, where the notch/rounded corner sits to one physical
+            side regardless of LTR/RTL. */}
+        <div style={{ position: 'absolute', top: safeTop(14), left: safeLeft(16), right: safeRight(16), display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
           <button
             onClick={() => setEditMode(!editMode)}
             /* Sits on the hero banner, which stays a fixed dark/colorful backdrop
                regardless of app theme (like the pre-auth screens) — so this chip
                is deliberately NOT theme-linked, to keep it readable in light mode. */
-            style={{ padding: '6px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)', fontSize: 12, fontWeight: 600, color: 'rgba(230,230,255,0.85)', cursor: 'pointer' }}
+            style={{
+              padding: '6px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)',
+              fontSize: 12, fontWeight: 600, color: 'rgba(230,230,255,0.85)', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              // Label width already clears 44px; only height (~26px) was short.
+              ...tapTargetMinHeight(26),
+            }}
           >
             {editMode ? (isAr ? 'تم' : 'Done') : (isAr ? 'تخصيص' : 'Customize')}
           </button>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
-              style={{ padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.2)', fontSize: 12, fontWeight: 700, color: '#a78bfa', cursor: 'pointer' }}
+              style={{
+                padding: '6px 12px', borderRadius: 10, border: '1px solid rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.2)',
+                fontSize: 12, fontWeight: 700, color: '#a78bfa', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                ...tapTargetMinHeight(26),
+              }}
             >
               {lang === 'en' ? 'عربي' : 'EN'}
             </button>
@@ -709,6 +746,9 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
               style={{
                 width: 30, height: 30, borderRadius: 10, border: '1px solid rgba(255,71,133,0.3)', background: 'rgba(255,71,133,0.14)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: signingOut ? 'default' : 'pointer', opacity: signingOut ? 0.6 : 1, padding: 0,
+                // Visible box stays 30x30; clickable box expands to 44x44 via
+                // negative margin (same precedent as the Ludo back button).
+                ...tapTarget(30, 30),
               }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff4785" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -718,10 +758,13 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
           </div>
         </div>
 
-        {/* Pinned badges on banner */}
-        <div style={{ position: 'absolute', bottom: 16, right: isAr ? 'auto' : 16, left: isAr ? 16 : 'auto', display: 'flex', gap: 8, zIndex: 2 }}>
+        {/* Pinned badges on banner — bottom sits well clear of the home
+            indicator (this row is inside the 256px hero, not screen-bottom),
+            but still given `safeBottom`-free horizontal insets for landscape
+            notch clearance, matching the top-controls row above. */}
+        <div style={{ position: 'absolute', bottom: 16, right: isAr ? 'auto' : safeRight(16), left: isAr ? safeLeft(16) : 'auto', display: 'flex', gap: 8, zIndex: 2 }}>
           {pinnedBadges.map((b) => (
-            <button key={b.id} onClick={() => setSelectedBadge(b)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            <button key={b.id} onClick={() => setSelectedBadge(b)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', ...tapTarget(36, 36) }}>
               <BadgeMark badge={b} size={36} />
             </button>
           ))}

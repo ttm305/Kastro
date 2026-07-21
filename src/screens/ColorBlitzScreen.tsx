@@ -9,6 +9,7 @@ import {
 import MatchModeSelect from '../components/match/MatchModeSelect'
 import MatchLobby from '../components/match/MatchLobby'
 import MatchResults from '../components/match/MatchResults'
+import GameHeader from '../components/GameHeader'
 import { sound } from '../lib/sound'
 import { diagLog } from '../lib/diagnostics'
 
@@ -360,24 +361,6 @@ function MiniGrid({ gridSize, tiles, targetIndex }: { gridSize: number; tiles: n
           }}
         />
       ))}
-    </div>
-  )
-}
-
-function GameHeader({ accent, isAr, nameEn, nameAr, round, totalRounds, score, onExit }: {
-  accent: string; isAr: boolean; nameEn: string; nameAr: string; round: number; totalRounds: number; score: number; onExit: () => void
-}) {
-  return (
-    <div className="glass" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <button onClick={onExit} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 13, color: 'var(--foreground)' }}>✕</button>
-      <div style={{ textAlign: 'center' }}>
-        <div className={isAr ? 'font-cairo' : 'font-display'} style={{ fontSize: 13.5, fontWeight: 800, color: 'var(--foreground)' }}>{isAr ? nameAr : nameEn}</div>
-        <div style={{ fontSize: 10.5, color: accent }}>{isAr ? `جولة ${round}/${totalRounds}` : `Round ${round}/${totalRounds}`}</div>
-      </div>
-      <div style={{ textAlign: 'center', minWidth: 46 }}>
-        <div style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 16, fontWeight: 800, color: accent }}>{score}</div>
-        <div style={{ fontSize: 9, color: 'rgba(var(--fg-rgb),0.4)' }}>{isAr ? 'النقاط' : 'Score'}</div>
-      </div>
     </div>
   )
 }

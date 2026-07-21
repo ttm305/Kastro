@@ -20,6 +20,7 @@ import {
   submitLudoMove, finalizeLudoMatch, checkLudoTimeout, getActiveLudoMatch, forfeitLudoMatch, type ActiveLudoMatch,
 } from '../lib/api'
 import MatchChat from '../components/boardgames/MatchChat'
+import { safeTop, safeLeft, safeRight } from '../lib/safeArea'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -151,7 +152,7 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
           same pattern already used by TopBar.tsx. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 10,
-        padding: '18px 16px 10px', paddingTop: 'max(18px, env(safe-area-inset-top, 0px))',
+        padding: '18px 16px 10px', paddingTop: safeTop(18), paddingLeft: safeLeft(16), paddingRight: safeRight(16),
       }}>
         {/* 44x44 is the platform-standard minimum comfortable tap target
             (Apple HIG / Material both specify it) — the icon stays visually

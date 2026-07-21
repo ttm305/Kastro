@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { safeBottom, safeLeft, safeRight, safeTop } from '../lib/safeArea'
 
 interface Props {
   onClaim: (xp: number) => void
@@ -60,7 +61,12 @@ export default function DailyRewardModal({ onClaim, onClose, lang, streak }: Pro
         background: 'rgba(3,3,15,0.9)',
         backdropFilter: 'blur(16px)',
         display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        // Bottom-docked (flex-end), so the panel — and the "Claim" button
+        // inside it — sits close to the real screen edge. Was a flat
+        // '0 16px 32px' with no safe-area awareness; the 32px alone doesn't
+        // clear the home indicator on a notched iPhone.
         padding: '0 16px 32px',
+        paddingTop: safeTop(0), paddingBottom: safeBottom(32), paddingLeft: safeLeft(16), paddingRight: safeRight(16),
       }}
     >
       <div

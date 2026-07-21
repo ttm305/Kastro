@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { Screen, Lang } from '../App'
 import { useAuth } from '../lib/auth'
 import { startGameSession, getGameQuestions, submitAnswer, completeGameSession } from '../lib/api'
+import { safeTop, safeLeft, safeRight, tapTarget } from '../lib/safeArea'
 
 interface Props {
   onNavigate: (s: Screen) => void
@@ -174,10 +175,13 @@ export default function WorkGameScreen({ onNavigate, lang, gameId, context }: Pr
 
   return (
     <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
-      {/* Game Header */}
-      <div className="glass" style={{ padding: '12px 16px' }}>
+      {/* Game Header — this is the screen's own first element (no TopBar
+          above it), so it needs its own safe-area top padding; was
+          hardcoded '12px 16px' with none, same bug class as the Emoji
+          Decode/Color Blitz local GameHeader that's now shared. */}
+      <div className="glass" style={{ padding: '12px 16px', paddingTop: safeTop(12), paddingLeft: safeLeft(16), paddingRight: safeRight(16) }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <button onClick={() => onNavigate('games')} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: 'var(--foreground)' }}>
+          <button onClick={() => onNavigate('games')} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 14, color: 'var(--foreground)', ...tapTarget(34, 34) }}>
             ✕
           </button>
           <div style={{ textAlign: 'center' }}>

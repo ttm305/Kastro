@@ -1,6 +1,7 @@
 import type { Lang } from '../App'
 import KastroLogo from './KastroLogo'
 import NotificationsBell from './NotificationsBell'
+import { safeTop, safeLeft, safeRight, tapTarget, tapTargetMinHeight } from '../lib/safeArea'
 
 interface Props {
   title: string
@@ -28,16 +29,18 @@ export default function TopBar({ title, titleAr, lang, setLang, onBack, rightSlo
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        // Base padding stays 14px on all sides for the normal browser case;
-        // on a notched/Dynamic-Island device (or any Capacitor build, which
-        // renders truly edge-to-edge with no OS chrome of its own) the top
-        // inset can exceed that, so take whichever is larger rather than
-        // stacking them. Requires viewport-fit=cover in index.html (already
-        // set) for env(safe-area-inset-*) to resolve to a nonzero value —
-        // it's 0px on non-notched devices/browsers, so this is a no-op
-        // there.
+        // Base padding stays 14px/20px on all sides for the normal browser
+        // case; on a notched/Dynamic-Island device (or any Capacitor build,
+        // which renders truly edge-to-edge with no OS chrome of its own) the
+        // top/left/right insets can exceed that, so take whichever is larger
+        // rather than stacking them. Requires viewport-fit=cover in
+        // index.html (already set) for env(safe-area-inset-*) to resolve to
+        // a nonzero value — it's 0px on non-notched devices/browsers/most
+        // Android, so this is a no-op there (no extra empty space).
         padding: '14px 20px',
-        paddingTop: 'max(14px, env(safe-area-inset-top))',
+        paddingTop: safeTop(14),
+        paddingLeft: safeLeft(20),
+        paddingRight: safeRight(20),
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -59,6 +62,10 @@ export default function TopBar({ title, titleAr, lang, setLang, onBack, rightSlo
               justifyContent: 'center',
               cursor: 'pointer',
               color: 'var(--foreground)',
+              // Visible box stays 36x36 (unchanged design); actual clickable
+              // box is padded out to the 44x44 minimum and pulled back with
+              // an equal negative margin so surrounding layout doesn't grow.
+              ...tapTarget(36, 36),
             }}
             aria-label={lang === 'ar' ? 'رجوع' : 'Back'}
           >
@@ -92,6 +99,13 @@ export default function TopBar({ title, titleAr, lang, setLang, onBack, rightSlo
             fontWeight: 700,
             color: '#a78bfa',
             letterSpacing: '0.05em',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            // Width already clears 44px with the "عربي"/"EN" label; only
+            // height (~26px) was short of the 44px minimum. Pad/negative-
+            // margin vertically only so the pill's visual size is unchanged.
+            ...tapTargetMinHeight(26),
           }}
         >
           {lang === 'en' ? 'عربي' : 'EN'}

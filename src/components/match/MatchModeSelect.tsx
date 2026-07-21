@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Lang } from '../../App'
 import { startSoloPractice, createPrivateRoom, joinRoomByCode, joinMatchmaking } from '../../lib/api'
 import { primeSound, sound } from '../../lib/sound'
+import { safeTop, safeLeft, safeRight, tapTarget } from '../../lib/safeArea'
 
 interface Props {
   gameId: string
@@ -94,8 +95,10 @@ export default function MatchModeSelect({ gameId, nameEn, nameAr, accentColor, l
 
   return (
     <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
-      <div className="glass" style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={onBack} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--foreground)' }}>
+      {/* Pre-match mode-select screen — its own first element, same fix as
+          every other screen-owns-its-header case found in this audit. */}
+      <div className="glass" style={{ padding: '14px 16px', paddingTop: safeTop(14), paddingLeft: safeLeft(16), paddingRight: safeRight(16), display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={onBack} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--foreground)', ...tapTarget(36, 36) }}>
           {isAr ? '→' : '←'}
         </button>
         <div>

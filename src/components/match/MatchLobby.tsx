@@ -3,6 +3,7 @@ import type { Lang } from '../../App'
 import Avatar from '../Avatar'
 import type { MatchRoom } from '../../lib/api'
 import type { RoomPlayerWithProfile } from '../../lib/useMatchEngine'
+import { safeTop, safeLeft, safeRight, tapTarget } from '../../lib/safeArea'
 
 interface Props {
   room: MatchRoom
@@ -48,14 +49,15 @@ export default function MatchLobby({ room, players, myUserId, lang, accentColor,
 
   return (
     <div className="screen bg-mesh" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
-      <div className="glass" style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Pre-match waiting-room header — same fix as MatchModeSelect. */}
+      <div className="glass" style={{ padding: '14px 16px', paddingTop: safeTop(14), paddingLeft: safeLeft(16), paddingRight: safeRight(16), display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div className={isAr ? 'font-cairo' : 'font-display'} style={{ fontSize: 16, fontWeight: 800, color: 'var(--foreground)' }}>{isAr ? nameAr : nameEn}</div>
           <div style={{ fontSize: 11, color: 'rgba(var(--fg-rgb),0.4)' }}>
             {room.mode === 'matchmaking' ? (isAr ? 'مباراة سريعة' : 'Quick Match') : isAr ? 'غرفة خاصة' : 'Private Room'}
           </div>
         </div>
-        <button onClick={onLeave} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--foreground)' }}>✕</button>
+        <button onClick={onLeave} style={{ background: 'rgba(var(--fg-rgb),0.08)', border: '1px solid rgba(var(--fg-rgb),0.1)', borderRadius: 10, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--foreground)', ...tapTarget(34, 34) }}>✕</button>
       </div>
 
       <div style={{ padding: '20px 18px', maxWidth: 480, margin: '0 auto', width: '100%', flex: 1 }}>
