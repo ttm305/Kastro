@@ -354,7 +354,7 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                     style={{ position: 'relative', borderRadius: '50%', animation: isFirst ? 'badge-live-pulse 2s ease-in-out infinite' : 'none' }}
                     onClick={() => { if (isFirst) { setConfetti(true); setTimeout(() => setConfetti(false), 2500) } }}
                   >
-                    <Avatar url={p.avatar_url} size={isFirst ? 62 : 50} alt={p.name} style={frameAvatarStyle(eq.frame, '2px solid transparent')} frame={eq.frame} />
+                    <Avatar url={p.avatar_url} size={isFirst ? 62 : 50} alt={p.name} style={frameAvatarStyle(eq.frame)} frame={eq.frame} />
                     {eq.decoration && (
                       <span style={{ position: 'absolute', top: -6, right: isAr ? 'auto' : -6, left: isAr ? -6 : 'auto', fontSize: isFirst ? 16 : 14, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))', pointerEvents: 'none' }}>
                         {eq.decoration.icon}
@@ -466,7 +466,7 @@ export default function LeaderboardScreen({ lang, setLang }: Props) {
                 </div>
 
                 <div className={p.isMe ? 'aura-diamond' : ''} style={{ position: 'relative', borderRadius: '50%', flexShrink: 0 }}>
-                  <Avatar url={p.avatar_url} size={36} alt={p.name} style={frameAvatarStyle(eq.frame, '2px solid transparent')} frame={eq.frame} />
+                  <Avatar url={p.avatar_url} size={36} alt={p.name} style={frameAvatarStyle(eq.frame)} frame={eq.frame} />
                   {eq.decoration && (
                     <span style={{ position: 'absolute', top: -5, right: isAr ? 'auto' : -5, left: isAr ? -5 : 'auto', fontSize: 12, lineHeight: 1, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))', pointerEvents: 'none' }}>
                       {eq.decoration.icon}

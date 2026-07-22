@@ -317,7 +317,7 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
           {/* Player row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, position: 'relative', zIndex: 1 }}>
             <div style={{ position: 'relative', flexShrink: 0 }}>
-              <Avatar url={profile.avatar_url} size={64} className="aura-diamond" style={frameAvatarStyle(equipped.frame, '3px solid transparent')} frame={equipped.frame} />
+              <Avatar url={profile.avatar_url} size={64} style={frameAvatarStyle(equipped.frame)} frame={equipped.frame} />
               {equipped.decoration && (
                 <span style={{ position: 'absolute', top: -8, right: isAr ? 'auto' : -8, left: isAr ? -8 : 'auto', fontSize: 20, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))', pointerEvents: 'none', zIndex: 2 }}>
                   {equipped.decoration.icon}

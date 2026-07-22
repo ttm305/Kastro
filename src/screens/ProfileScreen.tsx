@@ -466,7 +466,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const equipped = resolveCosmetics(catalog, profile)
   const currentTitle = equipped.title
   const currentDecoration = equipped.decoration
-  const currentFrameStyle = frameAvatarStyle(equipped.frame, '3px solid var(--background)')
+  const currentFrameStyle = frameAvatarStyle(equipped.frame)
 
   async function handleSelectFrame(id: string) {
     setSelectedFrame(id)

@@ -35,6 +35,8 @@
     "typescript": "5.9.3",
     "vite": "8.1.4",
     "vitest": "^2.1.8",
+    "jsdom": "^25.0.1",
+    "@testing-library/react": "^16.1.0",
     "@capacitor/cli": "^8.0.0",
     "@capacitor/ios": "^8.0.0",
     "@capacitor/android": "^8.0.0"

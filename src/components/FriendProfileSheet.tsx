@@ -182,7 +182,7 @@ export default function FriendProfileSheet({ userId, lang, onClose, isFriend, on
                   covering the username. */}
               <div style={{ display: 'flex', justifyContent: 'center', marginTop: -104, marginBottom: 36 }}>
                 <div style={{ position: 'relative' }}>
-                  <Avatar url={profile.avatar_url} size={84} style={frameAvatarStyle(equipped?.frame ?? null, '3px solid var(--surface-1)')} frame={equipped?.frame ?? null} />
+                  <Avatar url={profile.avatar_url} size={84} style={frameAvatarStyle(equipped?.frame ?? null)} frame={equipped?.frame ?? null} />
                   {equipped?.decoration && (
                     <span
                       style={{ position: 'absolute', top: -8, right: isAr ? 'auto' : -8, left: isAr ? -8 : 'auto', fontSize: 26, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.4))', pointerEvents: 'none' }}

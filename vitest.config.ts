@@ -1,10 +1,14 @@
 import { defineConfig } from 'vitest/config'
 
-// Pure-logic tests only (Ludo rules engine, geometry) — no DOM needed, so
-// the default 'node' environment is fine and keeps the suite fast.
+// Default environment is 'node' -- most tests here are pure logic (Ludo
+// rules engine, avatar-frame geometry) with no DOM needed, which keeps the
+// suite fast. Component tests that DO need a DOM (e.g.
+// src/components/Avatar.test.tsx) opt into jsdom per-file via a
+// `// @vitest-environment jsdom` comment at the top of that file instead
+// of paying the jsdom cost for the whole suite.
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 })

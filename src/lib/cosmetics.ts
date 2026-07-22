@@ -89,14 +89,29 @@ export function bannerBackground(banner: CosmeticItem | null, fallback: string):
   return (key && BANNER_GRADIENTS[key]) || fallback
 }
 
-/** Resolves an equipped frame into a real avatar border/glow style. Pass the
- * screen's own default border (they vary — 3px on ProfileScreen's 68px
- * avatar, on FriendProfileSheet's 84px avatar, thinner on compact
- * leaderboard/lobby rows) so unequipped still renders that screen's normal
- * avatar edge instead of no border at all. */
-export function frameAvatarStyle(frame: CosmeticItem | null, baseBorder: string): { border: string; boxShadow?: string } {
+/**
+ * Resolves an equipped frame into a real avatar border/glow style. The
+ * cosmetic frame system is opt-in only: with no frame equipped (or an
+ * equipped frame whose style carries no `ring`, e.g. an image-overlay
+ * frame — Avatar.tsx handles those entirely on its own), this returns an
+ * EMPTY object — no border, no boxShadow, nothing. That's what makes the
+ * default (unframed) avatar render pixel-identical to the original
+ * pre-cosmetics look everywhere: ProfileScreen, HomeScreen,
+ * LeaderboardScreen, FriendProfileSheet, chat, shop preview.
+ *
+ * `baseBorder` is optional and exists ONLY for call sites that need a
+ * border for a reason that has nothing to do with cosmetics — e.g.
+ * GameLobbyScreen's ready/not-ready indicator ring, which must still show
+ * even when the player has no frame equipped. Do not add a `baseBorder`
+ * argument to a call site just to give the "unequipped" avatar some kind
+ * of default edge — that reintroduces exactly the regression this comment
+ * exists to prevent (a black/blue ring on a fully unframed avatar). If a
+ * frame IS equipped and its style has a `ring`, that ring always wins
+ * over any `baseBorder` passed in.
+ */
+export function frameAvatarStyle(frame: CosmeticItem | null, baseBorder?: string): { border?: string; boxShadow?: string } {
   const style = (frame?.style as any) ?? {}
-  if (!style.ring) return { border: baseBorder }
+  if (!style.ring) return baseBorder ? { border: baseBorder } : {}
   return {
     border: `3px solid ${style.ring}`,
     boxShadow: style.glow ? `0 0 14px ${style.ring}88` : undefined,
