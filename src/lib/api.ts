@@ -15,6 +15,7 @@ export type CosmeticItem = Tables<'cosmetic_items'>
 export type PublicProfile = {
   id: string
   username: string
+  display_name: string | null
   level: number
   xp: number
   streak_count: number
@@ -1389,16 +1390,20 @@ export async function getMatchResults(roomId: string): Promise<{ room: MatchRoom
 }
 
 // ---------------------------------------------------------------------------
-// Profile editing — bio/branch_id/avatar_url/header_url are NOT among the
-// fields the profiles_guard_privileged trigger clamps (only role/xp/level/
-// status/login_count/access_code_id/username are), so a direct self-row
-// update is enough and already permitted by RLS (profiles_update_self_or_
-// owner). Username goes through the update_username RPC instead, since it
-// IS clamped and requires the server-side length/uniqueness rules.
+// Profile editing — bio/branch_id/avatar_url/header_url/display_name are NOT
+// among the fields the profiles_guard_privileged trigger clamps (only
+// role/xp/level/status/login_count/access_code_id/username/custom_title/
+// custom_title_ar/coins are), so a direct self-row update is enough and
+// already permitted by RLS (profiles_update_self_or_owner). Username goes
+// through the update_username RPC instead, since it IS clamped and requires
+// the server-side length/uniqueness rules — display_name has no uniqueness
+// requirement (by design, multiple users may share one), so it needs no
+// equivalent RPC; the DB-side `profiles_display_name_length` check
+// constraint (<=40 chars) is the only server-side guard it needs.
 // ---------------------------------------------------------------------------
 export async function updateProfile(
   userId: string,
-  patch: Partial<Pick<Profile, 'bio' | 'branch_id' | 'avatar_url' | 'header_url'>>
+  patch: Partial<Pick<Profile, 'bio' | 'branch_id' | 'avatar_url' | 'header_url' | 'display_name'>>
 ) {
   const { error } = await supabase.from('profiles').update(patch).eq('id', userId)
   return { error: error?.message ?? null }

@@ -200,12 +200,31 @@ export default function FriendProfileSheet({ userId, lang, onClose, isFriend, on
                   can never visually bleed through regardless of stacking
                   order. */}
               <div style={{ position: 'relative', background: 'var(--surface-1)', textAlign: 'center', marginBottom: 20 }}>
-                {/* Usernames are plain user-chosen identifiers — use the
-                    app's regular UI font, not the decorative "Exo 2"
-                    display font (its stylized glyphs, e.g. a slanted
-                    uppercase T, made short usernames like "@T" look
-                    distorted). */}
-                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--foreground)' }}>@{profile.username}</div>
+                {/* Display Name (if this user has set one) is the prominent
+                    identity line, with @username demoted underneath in
+                    smaller muted text — same order as the owner's own
+                    profile. Never falls back to the username as if it were
+                    a display name: if display_name is empty, this row is
+                    simply omitted and @username alone keeps its normal
+                    prominent styling below, unchanged from before. Usernames
+                    are plain user-chosen identifiers — use the app's regular
+                    UI font, not the decorative "Exo 2" display font (its
+                    stylized glyphs, e.g. a slanted uppercase T, made short
+                    usernames like "@T" look distorted). */}
+                {profile.display_name?.trim() && (
+                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--foreground)', overflowWrap: 'break-word' }}>
+                    {profile.display_name.trim()}
+                  </div>
+                )}
+                <div
+                  style={
+                    profile.display_name?.trim()
+                      ? { fontSize: 13, fontWeight: 600, color: 'rgba(var(--fg-rgb),0.5)', marginTop: 2 }
+                      : { fontSize: 18, fontWeight: 800, color: 'var(--foreground)' }
+                  }
+                >
+                  @{profile.username}
+                </div>
                 {equipped?.title && (
                   <div style={{ fontSize: 12, fontWeight: 700, color: '#9d6fff', marginTop: 3 }}>
                     {equipped.title.icon} {isAr ? (equipped.title.label_ar || equipped.title.label) : equipped.title.label}

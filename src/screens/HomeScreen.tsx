@@ -30,6 +30,8 @@ import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 interface Props {
   onNavigate: (s: Screen) => void
   onNavigateToGame: (s: Screen, gameId?: string) => void
+  /** Opens the Plato-style Profile slide-over (see ProfileOverlayHost in App.tsx). */
+  onOpenProfile: () => void
   lang: Lang
   setLang: (l: Lang) => void
 }
@@ -106,7 +108,7 @@ const ZapIcon = ({ color = '#ffd700', size = 16 }: { color?: string; size?: numb
   </svg>
 )
 
-export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang }: Props) {
+export default function HomeScreen({ onNavigate, onNavigateToGame, onOpenProfile, lang, setLang }: Props) {
   const isAr = lang === 'ar'
   const { profile, refreshProfile } = useAuth()
 
@@ -253,8 +255,13 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
 
       <TopBar title="KASTRO" lang={lang} setLang={setLang} />
 
-      {/* Live ticker */}
-      <div style={{ background: 'rgba(0,212,255,0.05)', borderBottom: '1px solid rgba(0,212,255,0.1)', padding: '7px 0', overflow: 'hidden' }}>
+      {/* Live ticker. No border/divider on this strip — its `border-bottom:
+          1px solid rgba(0,212,255,0.1)` was the thin bright-blue horizontal
+          line sitting between the header and the profile card below;
+          removed so the header hands off to the page content with no seam.
+          The ticker's own translucent background wash is left as-is (it's a
+          soft tint band behind scrolling text, not a hairline divider). */}
+      <div style={{ background: 'rgba(0,212,255,0.05)', padding: '7px 0', overflow: 'hidden' }}>
         <div style={{ display: 'flex', gap: 48, whiteSpace: 'nowrap', animation: 'ticker 32s linear infinite' }}>
           {[...globalActivity, ...globalActivity].map((a, i) => (
             <span key={i} style={{ fontSize: 11, color: 'rgba(0,212,255,0.7)', fontWeight: 500, flexShrink: 0 }}>
@@ -276,13 +283,23 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
             XP/streak text readable over an arbitrarily bright photo. With
             no custom header, the card falls back to the exact original
             premium gradient + starfield — unchanged. */}
+        {/* Entire card is the Profile entry point (Plato-style redesign) —
+            not just the avatar. Uses the same card-hover press affordance
+            as every other tappable card on this screen (Weekly Challenge,
+            etc.) for a consistent premium feel. */}
         <div
-          className="card"
+          className="card card-hover"
+          role="button"
+          tabIndex={0}
+          aria-label={isAr ? 'فتح الملف الشخصي' : 'Open profile'}
+          onClick={onOpenProfile}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenProfile() } }}
           style={{
             padding: '20px',
             background: profile.header_url || equipped.banner ? undefined : 'linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(0,212,255,0.09) 100%)',
             border: '1px solid rgba(124,58,237,0.28)',
             position: 'relative', overflow: 'hidden',
+            cursor: 'pointer',
           }}
         >
           {profile.header_url ? (
@@ -328,13 +345,28 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, lang, setLang
               </div>
             </div>
 
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ margin: '0 0 1px', fontSize: 11, color: 'rgba(var(--fg2-rgb),0.55)' }}>
                 {isAr ? 'مرحباً،' : 'Welcome back,'}
               </p>
-              <h2 className={isAr ? 'font-cairo' : 'font-display'} style={{ margin: '0 0 4px', fontSize: 21, fontWeight: 800, color: 'var(--foreground)' }}>
-                @{profile.username}
+              {/* Display Name takes the primary heading slot (falls back to
+                  @username when unset, so accounts created before this
+                  field existed look identical to before). @username moves
+                  to a smaller secondary line beneath it whenever a display
+                  name is actually set — Title and the LV badge (already
+                  shown on the avatar above) round out the identity block
+                  per the Display Name/Username/Title/Level spec. */}
+              <h2
+                className={isAr ? 'font-cairo' : 'font-display'}
+                style={{ margin: '0 0 2px', fontSize: 21, fontWeight: 800, color: 'var(--foreground)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                {profile.display_name?.trim() || `@${profile.username}`}
               </h2>
+              {profile.display_name?.trim() && (
+                <p style={{ margin: '0 0 4px', fontSize: 12, color: 'rgba(var(--fg2-rgb),0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  @{profile.username}
+                </p>
+              )}
               {equipped.title && (
                 <p style={{ margin: '0 0 4px', fontSize: 11.5, fontWeight: 700, color: '#9d6fff' }}>
                   {equipped.title.icon} {isAr ? (equipped.title.label_ar || equipped.title.label) : equipped.title.label}

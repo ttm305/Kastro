@@ -7,7 +7,11 @@ import CosmeticBannerLayer from '../components/CosmeticBannerLayer'
 import Avatar from '../components/Avatar'
 
 interface Props {
-  onNavigate: (s: Screen) => void
+  // Shop is now a top-level bottom-nav tab (replacing Hero/Profile), so it
+  // no longer needs a back-button destination — kept optional/unused for
+  // prop-shape consistency with the other top-level tabs (see Leaderboard/
+  // FriendsScreen, which follow the same pattern).
+  onNavigate?: (s: Screen) => void
   lang: Lang
   setLang: (l: Lang) => void
 }
@@ -138,7 +142,7 @@ function ItemPreviewVisual({
   )
 }
 
-export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
+export default function RewardsScreen({ lang, setLang }: Props) {
   const { profile, refreshProfile } = useAuth()
   const [category, setCategory] = useState<CategoryKey>('all')
   // Applied filters — everything below `category` lives inside the Filter
@@ -283,7 +287,7 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
   if (loading) {
     return (
       <div className="screen bg-mesh">
-        <TopBar title="Shop" titleAr="المتجر" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
+        <TopBar title="Shop" titleAr="المتجر" lang={lang} setLang={setLang} />
         <div style={{ padding: '40px 16px', textAlign: 'center', fontSize: 13, color: 'rgba(var(--fg2-rgb),0.4)' }}>
           {isAr ? 'جارٍ التحميل...' : 'Loading…'}
         </div>
@@ -298,7 +302,7 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
         @keyframes sheet-in { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
       `}</style>
       <Toast msg={toast?.msg || ''} visible={!!toast} color={toast?.color} />
-      <TopBar title="Shop" titleAr="المتجر" lang={lang} setLang={setLang} onBack={() => onNavigate('profile')} />
+      <TopBar title="Shop" titleAr="المتجر" lang={lang} setLang={setLang} />
 
       <div className="pb-nav" style={{ padding: '16px 16px' }}>
 

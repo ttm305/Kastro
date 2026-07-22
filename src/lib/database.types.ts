@@ -1491,6 +1491,7 @@ export type Database = {
           created_at: string
           custom_title: string | null
           custom_title_ar: string | null
+          display_name: string | null
           email: string
           equipped_banner_id: string | null
           equipped_frame_id: string | null
@@ -1522,6 +1523,7 @@ export type Database = {
           created_at?: string
           custom_title?: string | null
           custom_title_ar?: string | null
+          display_name?: string | null
           email: string
           equipped_banner_id?: string | null
           equipped_frame_id?: string | null
@@ -1553,6 +1555,7 @@ export type Database = {
           created_at?: string
           custom_title?: string | null
           custom_title_ar?: string | null
+          display_name?: string | null
           email?: string
           equipped_banner_id?: string | null
           equipped_frame_id?: string | null

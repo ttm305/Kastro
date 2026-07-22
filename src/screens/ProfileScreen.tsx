@@ -33,6 +33,10 @@ import {
 import { getCosmeticCatalog, resolveCosmetics, frameAvatarStyle, bannerBackground } from '../lib/cosmetics'
 
 const MAX_USERNAME_LEN = 24
+// Matches the DB-side `profiles_display_name_length` check constraint.
+// Unlike username, Display Name has no minimum length or uniqueness rule —
+// it's a free-form label, not an identifier.
+const MAX_DISPLAY_NAME_LEN = 40
 
 // Shown whenever a user has neither a custom cover photo nor an owned/
 // equipped "Profile Banner" cosmetic — previously this fell through to
@@ -48,6 +52,17 @@ interface Props {
   setLang: (l: Lang) => void
   userRole?: UserRole
   onSignOut: () => Promise<void>
+  /**
+   * When set, this screen is being shown inside the Plato-style slide-over
+   * (see ProfileOverlayHost/App.tsx) rather than as its own full-screen
+   * route — renders a back arrow that closes the overlay (reversing the
+   * slide animation) instead of the plain bottom-nav-tab chrome this screen
+   * used to have. Omitted entirely for the few remaining call sites that
+   * still navigate here as a full screen (e.g. Achievements/Season Pass/
+   * Tournament/Admin's own back buttons), which keep today's no-back-arrow
+   * look unchanged.
+   */
+  onClose?: () => void
 }
 
 type Tab = 'stats' | 'badges' | 'activity' | 'season'
@@ -340,7 +355,7 @@ function PushNotificationToggle({ isAr }: { isAr: boolean }) {
   )
 }
 
-export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'player', onSignOut }: Props) {
+export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'player', onSignOut, onClose }: Props) {
   const { profile, refreshProfile } = useAuth()
   const [tab, setTab] = useState<Tab>('stats')
   const [selectedFrame, setSelectedFrame] = useState<string | null>(null)
@@ -352,11 +367,13 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [showHeaderPicker, setShowHeaderPicker] = useState(false)
 
-  // Profile editor drafts (bio / username / branch)
+  // Profile editor drafts (display name / bio / username / branch)
+  const [displayNameDraft, setDisplayNameDraft] = useState('')
   const [bioDraft, setBioDraft] = useState('')
   const [usernameDraft, setUsernameDraft] = useState('')
   const [branchChoice, setBranchChoice] = useState('')
   const [branches, setBranches] = useState<Branch[]>([])
+  const [savingDisplayName, setSavingDisplayName] = useState(false)
   const [savingBio, setSavingBio] = useState(false)
   const [savingUsername, setSavingUsername] = useState(false)
   const [savingBranch, setSavingBranch] = useState(false)
@@ -441,10 +458,11 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   // re-syncs after a successful save (refreshProfile() updates `profile`).
   useEffect(() => {
     if (!profile) return
+    setDisplayNameDraft(profile.display_name ?? '')
     setBioDraft(profile.bio ?? '')
     setUsernameDraft(profile.username)
     setBranchChoice(profile.branch_id ?? '')
-  }, [profile?.id, profile?.bio, profile?.username, profile?.branch_id])
+  }, [profile?.id, profile?.display_name, profile?.bio, profile?.username, profile?.branch_id])
 
   if (!profile || loading) {
     return <div className="screen bg-game" />
@@ -501,6 +519,19 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
   const branchUnchanged = branchChoice === (profile.branch_id ?? '')
   const myBranch = branches.find((b) => b.id === profile.branch_id)
   const minUsernameLen = profile.role === 'owner' ? 1 : 3
+
+  async function handleSaveDisplayName() {
+    const trimmed = displayNameDraft.trim()
+    if (trimmed.length > MAX_DISPLAY_NAME_LEN) return
+    setSavingDisplayName(true)
+    // Empty string clears it back to null (falls back to @username
+    // everywhere it's shown), same convention as bio.
+    const { error } = await updateProfile(profile!.id, { display_name: trimmed || null })
+    setSavingDisplayName(false)
+    if (error) { flash(error, '#ff4785'); return }
+    await refreshProfile()
+    flash(isAr ? '✓ تم الحفظ' : '✓ Saved', '#00e676')
+  }
 
   async function handleSaveBio() {
     setSavingBio(true)
@@ -711,21 +742,72 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
             landscape, where the notch/rounded corner sits to one physical
             side regardless of LTR/RTL. */}
         <div style={{ position: 'absolute', top: safeTop(14), left: safeLeft(16), right: safeRight(16), display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
-          <button
-            onClick={() => setEditMode(!editMode)}
-            /* Sits on the hero banner, which stays a fixed dark/colorful backdrop
-               regardless of app theme (like the pre-auth screens) — so this chip
-               is deliberately NOT theme-linked, to keep it readable in light mode. */
-            style={{
-              padding: '6px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)',
-              fontSize: 12, fontWeight: 600, color: 'rgba(230,230,255,0.85)', cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              // Label width already clears 44px; only height (~26px) was short.
-              ...tapTargetMinHeight(26),
-            }}
-          >
-            {editMode ? (isAr ? 'تم' : 'Done') : (isAr ? 'تخصيص' : 'Customize')}
-          </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            {/* Only rendered when shown inside the Plato-style slide-over
+                (see the `onClose` prop doc comment) — closes the overlay,
+                reversing the slide-in animation back to Home. The few
+                remaining full-screen-route call sites (Achievements/Season
+                Pass/etc.'s own back buttons landing here) don't pass
+                onClose, so they keep today's chrome exactly as-is.
+
+                Structural fix for the "Back is too small and almost
+                touching Customize" bug: the old version relied on
+                `tapTarget()`'s padding+negative-margin trick to grow a
+                fixed 30x30 `width/height` box up to a 44x44 hit area — but
+                this app's global CSS reset is `box-sizing: border-box`,
+                under which padding on a box with an explicit fixed
+                width/height does NOT grow the box at all (border-box caps
+                the total box at the declared width/height, so the padding
+                just ate into the icon's own content area instead). The
+                negative margin then WAS real, pulling this button 7px
+                closer to Customize on top of the row's `gap`, leaving a
+                ~1px visible seam — exactly the reported bug. Fixed here by
+                making the `<button>` itself a real, explicit 44x44 hit box
+                (no padding/margin arithmetic to get wrong), with the
+                original 30x30 visual chip rendered as a purely decorative
+                inner `<span>` centered inside it — so the icon's on-screen
+                size and position are unchanged, but the actual clickable
+                area is now genuinely 44x44 and participates normally in
+                this row's `gap: 12`, independent of Customize. */}
+            {onClose && (
+              <button
+                onClick={onClose}
+                aria-label={isAr ? 'رجوع' : 'Back'}
+                style={{
+                  width: 44, height: 44, borderRadius: 12, border: 'none', background: 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, flexShrink: 0,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 30, height: 30, borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(230,230,255,0.85)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isAr ? 'scaleX(-1)' : undefined }}>
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => setEditMode(!editMode)}
+              /* Sits on the hero banner, which stays a fixed dark/colorful backdrop
+                 regardless of app theme (like the pre-auth screens) — so this chip
+                 is deliberately NOT theme-linked, to keep it readable in light mode.
+                 `minHeight: 44` (explicit, not derived from padding math) guarantees
+                 a real >=44px tap target independent of the Back button above. */
+              style={{
+                padding: '6px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)',
+                fontSize: 12, fontWeight: 600, color: 'rgba(230,230,255,0.85)', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                minHeight: 44, boxSizing: 'border-box', flexShrink: 0,
+              }}
+            >
+              {editMode ? (isAr ? 'تم' : 'Done') : (isAr ? 'تخصيص' : 'Customize')}
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={() => setLang(lang === 'en' ? 'ar' : 'en')}
@@ -827,16 +909,35 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
 
         {/* Name & rank */}
         <div style={{ marginBottom: 16 }}>
-          {/* Usernames are plain user-chosen identifiers (letters, digits,
-              underscores) — they must use the app's regular UI font, not
-              the decorative "Exo 2" display font (whose stylized glyphs,
-              e.g. a slanted/geometric uppercase T, made short usernames
-              like "@T" look distorted/mis-rendered). Cairo is kept for
-              Arabic since it's the app's standard RTL body font, not a
+          {/* Instagram-style identity order: large Display Name, smaller
+              @username beneath it, then Bio. Display Name falls back to
+              @username when unset (pre-existing accounts render exactly as
+              before). Usernames are plain user-chosen identifiers (letters,
+              digits, underscores) — the @username line deliberately stays
+              on the app's regular UI font rather than the decorative
+              "Exo 2" display font (whose stylized glyphs, e.g. a slanted/
+              geometric uppercase T, made short usernames like "@T" look
+              distorted/mis-rendered); the display-name heading itself is
+              free text and uses the same heading font Home's Welcome Card
+              uses, for visual consistency between the two. Cairo is kept
+              for Arabic since it's the app's standard RTL body font, not a
               decorative one. */}
-          <h2 className={isAr ? 'font-cairo' : undefined} style={{ margin: '0 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--foreground)' }}>
-            @{profile.username}
+          <h2
+            className={isAr ? 'font-cairo' : 'font-display'}
+            style={{ margin: '0 0 2px', fontSize: 22, fontWeight: 800, color: 'var(--foreground)', overflowWrap: 'break-word' }}
+          >
+            {profile.display_name?.trim() || `@${profile.username}`}
           </h2>
+          {profile.display_name?.trim() && (
+            <p style={{ margin: '0 0 4px', fontSize: 13, color: 'rgba(var(--fg2-rgb),0.5)' }}>
+              @{profile.username}
+            </p>
+          )}
+          {profile.bio?.trim() && (
+            <p style={{ margin: '0 0 8px', fontSize: 13, color: 'rgba(var(--fg2-rgb),0.7)', lineHeight: 1.5 }}>
+              {profile.bio}
+            </p>
+          )}
           {/* Owner-assigned custom title — cosmetic only, separate from the
               equippable shop title below and from the real system role. */}
           {profile.custom_title && (
@@ -928,6 +1029,39 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
                   {profile.header_url ? (isAr ? 'تغيير الغلاف' : 'Change Cover') : (isAr ? 'إضافة صورة غلاف' : 'Add Cover Image')}
                 </button>
               </div>
+            </div>
+
+            {/* Display Name — a second, non-unique identity field shown
+                above @username everywhere identity is rendered (this
+                screen, Home's Welcome Card). Unlike Username, it has no
+                minimum length, no uniqueness requirement, and fully
+                supports Arabic/English/emoji/unicode since it's just plain
+                text (no transliteration or ASCII-only restriction like
+                Username has). */}
+            <div>
+              <label style={{ fontSize: 11, color: 'rgba(var(--fg2-rgb),0.5)', marginBottom: 6, display: 'block', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                {isAr ? 'الاسم المعروض' : 'Display Name'}
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="text"
+                  value={displayNameDraft}
+                  onChange={(e) => setDisplayNameDraft(e.target.value)}
+                  maxLength={MAX_DISPLAY_NAME_LEN}
+                  placeholder={isAr ? 'أدخل اسمك' : 'Enter your name'}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={handleSaveDisplayName}
+                  disabled={savingDisplayName || displayNameDraft.trim().length > MAX_DISPLAY_NAME_LEN || displayNameDraft.trim() === (profile.display_name ?? '')}
+                >
+                  {savingDisplayName ? (isAr ? '...' : '…') : (isAr ? 'حفظ' : 'Save')}
+                </button>
+              </div>
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)' }}>
+                {isAr ? `حتى ${MAX_DISPLAY_NAME_LEN} حرفًا — يمكن أن يتشابه مع مستخدمين آخرين` : `Up to ${MAX_DISPLAY_NAME_LEN} characters — can be shared with other users`}
+              </p>
             </div>
 
             {/* Username */}
@@ -1209,11 +1343,13 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
               {
                 key: 'progress',
                 en: 'Progress & Rewards', ar: 'التقدم والمكافآت',
+                // "Cosmetics Shop" removed — Shop now has its own permanent
+                // bottom-nav destination, so this row would have been a
+                // second, duplicate way to reach the exact same screen.
                 items: [
                   { en: 'Weekly Challenge', ar: 'تحدي الأسبوع', screen: 'weekly' as Screen, color: '#ff6b35' },
                   { en: 'Achievements', ar: 'الإنجازات', screen: 'achievements' as Screen, color: '#9d6fff' },
                   { en: 'Season Pass', ar: 'بطاقة الموسم', screen: 'seasonpass' as Screen, color: '#ffd700' },
-                  { en: 'Cosmetics Shop', ar: 'متجر المظاهر', screen: 'rewards' as Screen, color: '#00e676' },
                 ],
               },
               {

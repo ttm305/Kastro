@@ -20,6 +20,7 @@ import ColorBlitzScreen from './screens/ColorBlitzScreen'
 import LudoScreen from './screens/LudoScreen'
 import LudoPacingSlice from './screens/LudoPacingSlice'
 import BottomNav from './components/BottomNav'
+import ProfileOverlayHost from './components/ProfileOverlayHost'
 import SplashScreen from './components/SplashScreen'
 import AchievementOverlayHost from './components/AchievementOverlayHost'
 import ChatToastHost from './components/ChatToastHost'
@@ -64,7 +65,11 @@ export const OWNER_EMAIL = 'muraikhi13@gmail.com'
 
 // Weekly Challenge is no longer a bottom-nav slot — it stays reachable from
 // Home and the Profile hub instead, freeing the center slot for Friends.
-const NAV_SCREENS: Screen[] = ['home', 'games', 'friends', 'leaderboard', 'profile']
+// Profile/"Hero" is no longer a bottom-nav slot either (Plato-style redesign)
+// — it's reached exclusively from Home's Welcome Card via the slide-over
+// profile overlay (see profileOverlayOpen below), which frees this last slot
+// for Shop (formerly reachable only from inside Profile).
+const NAV_SCREENS: Screen[] = ['home', 'games', 'friends', 'leaderboard', 'rewards']
 
 function AppShell() {
   const { session, profile, ready, isPasswordRecovery, signOut } = useAuth()
@@ -74,6 +79,29 @@ function AppShell() {
   const [gameLaunchContext, setGameLaunchContext] = useState<{ type: 'practice' | 'challenge' | 'tournament'; refId?: string } | null>(null)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [pendingChatOpen, setPendingChatOpen] = useState<{ conversationId: string; otherUser: { id: string; username: string; avatar_url?: string | null } } | null>(null)
+
+  // Plato-style Profile slide-over (see ProfileOverlayHost). `profileEverOpened`
+  // lazily mounts <ProfileScreen> on first open and then NEVER unmounts it
+  // again — only `profileOverlayOpen` toggles afterward, animating it
+  // on/off-screen via transform. This is what makes reopening instant (no
+  // refetch/loading flash) and is why Home's own scroll position survives
+  // the whole flow untouched: `screen` itself never leaves 'home' while the
+  // overlay is open, so HomeScreen never unmounts either.
+  const [profileEverOpened, setProfileEverOpened] = useState(false)
+  const [profileOverlayOpen, setProfileOverlayOpen] = useState(false)
+
+  const openProfileOverlay = () => {
+    setProfileEverOpened(true)
+    // Double rAF: guarantees the browser paints the panel in its initial
+    // off-screen position at least once before we flip to "open", so the
+    // slide-in transition actually has something to animate from (setting
+    // both flags in the same tick would mount already-open with no visible
+    // motion on the very first use).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setProfileOverlayOpen(true))
+    })
+  }
+  const closeProfileOverlay = () => setProfileOverlayOpen(false)
 
   // Realtime-driven Friends-tab unread badge: refreshes the instant any of
   // my conversations/participant rows change (new message, read, cleanup),
@@ -182,7 +210,10 @@ function AppShell() {
   // standard Android top-level-tabs convention — back from Ranks doesn't
   // mean "whatever tab I was on two screens ago"), and only actually exit
   // the app from Home/Login, so a stray back-press deep in a flow can
-  // never accidentally kill the app.
+  // never accidentally kill the app. The Profile slide-over is checked
+  // first: it's not a `screen` at all (see profileOverlayOpen above), so
+  // without this check a back-press while it's open would fall through to
+  // the `screen === 'home'` branch and exit the app instead of closing it.
   useEffect(() => {
     if (!isNativePlatform()) return
     let handle: { remove: () => void } | null = null
@@ -190,7 +221,9 @@ function AppShell() {
     import('@capacitor/app').then(({ App: CapApp }) => {
       if (cancelled) return
       CapApp.addListener('backButton', () => {
-        if (screen === 'login' || screen === 'home') {
+        if (profileOverlayOpen) {
+          closeProfileOverlay()
+        } else if (screen === 'login' || screen === 'home') {
           CapApp.exitApp()
         } else if (NAV_SCREENS.includes(screen)) {
           safeNavigate('home')
@@ -203,8 +236,12 @@ function AppShell() {
       })
     })
     return () => { cancelled = true; handle?.remove() }
+    // profileOverlayOpen is a real dependency (not just screen): the whole
+    // point of the overlay is that `screen` stays 'home' while it's open, so
+    // without re-subscribing on this too, the closure above would keep
+    // whatever profileOverlayOpen was at mount time forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen])
+  }, [screen, profileOverlayOpen])
 
   const userRole: UserRole = profile?.role === 'owner' ? 'owner' : 'player'
   const userEmail = session?.user.email ?? ''
@@ -290,12 +327,21 @@ function AppShell() {
       style={{ minHeight: '100dvh', background: 'var(--background)', position: 'relative' }}
     >
       {screen === 'login'       && <LoginScreen onNavigate={setScreen} lang={lang} setLang={setLang} />}
-      {screen === 'home'        && <HomeScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} lang={lang} setLang={setLang} />}
+      {screen === 'home'        && <HomeScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} onOpenProfile={openProfileOverlay} lang={lang} setLang={setLang} />}
       {screen === 'games'       && <GamesLibraryScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} lang={lang} setLang={setLang} />}
       {screen === 'weekly'      && <WeeklyChallengeScreen onNavigate={safeNavigate} onNavigateToGame={navigateToGame} onBack={() => navigateBack('home')} lang={lang} setLang={setLang} />}
       {screen === 'leaderboard' && <LeaderboardScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
       {screen === 'achievements'&& <AchievementsScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
-      {screen === 'profile'     && <ProfileScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} userRole={userRole} onSignOut={signOut} />}
+      {/* Reached only via the handful of remaining "back to profile" buttons
+          deep in Achievements/Season Pass/Tournament/Admin (Profile itself
+          is no longer a bottom-nav tab — see NAV_SCREENS above) — NOT part
+          of the Home-anchored slide-over flow. Since 'profile' is no longer
+          in NAV_SCREENS, the bottom nav won't show here either, so this
+          still needs its own way out: `onClose` gives it the same back
+          arrow the slide-over uses, landing back on whichever screen the
+          user actually came from (or Home as a fallback) instead of
+          leaving them stranded with no nav at all. */}
+      {screen === 'profile'     && <ProfileScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} userRole={userRole} onSignOut={signOut} onClose={() => navigateBack('home')} />}
       {screen === 'friends'     && (
         <FriendsScreen
           onNavigate={safeNavigate}
@@ -326,7 +372,35 @@ function AppShell() {
       {screen === 'ludo'       && <LudoScreen onNavigate={safeNavigate} lang={lang} />}
       {screen === 'ludopacing' && <LudoPacingSlice onNavigate={safeNavigate} lang={lang} />}
 
-      {showNav && <BottomNav current={screen} onNavigate={safeNavigate} lang={lang} unreadChatCount={unreadChatCount} />}
+      {/* Hidden while the Profile slide-over is open — matches the native
+          push-navigation convention (the tab bar stays with whatever's
+          underneath, not the pushed page) and there's no "active" nav item
+          for Profile to highlight anymore since it's not a tab. */}
+      {showNav && !profileOverlayOpen && <BottomNav current={screen} onNavigate={safeNavigate} lang={lang} unreadChatCount={unreadChatCount} />}
+
+      {/* Plato-style Profile slide-over — lazily mounted on first open, then
+          kept mounted forever (see profileEverOpened above). Reached
+          exclusively from Home's Welcome Card now that Profile is no longer
+          a bottom-nav tab. Tapping something inside Profile that navigates
+          elsewhere (Season Pass, Achievements, Admin, etc.) closes the
+          overlay and performs a normal full-screen navigation, since those
+          destinations aren't part of the slide-over stack; navigating
+          "home" from inside it is just a close. */}
+      {profileEverOpened && (
+        <ProfileOverlayHost open={profileOverlayOpen} isRTL={isRTL} onRequestClose={closeProfileOverlay}>
+          <ProfileScreen
+            onNavigate={(s) => {
+              closeProfileOverlay()
+              if (s !== 'home') safeNavigate(s)
+            }}
+            lang={lang}
+            setLang={setLang}
+            userRole={userRole}
+            onSignOut={signOut}
+            onClose={closeProfileOverlay}
+          />
+        </ProfileOverlayHost>
+      )}
       {/* Diagnostics moved out of the global app shell — it used to render a
           floating 🐞 button on every screen for owner accounts, which is not
           acceptable production UI even though it never showed for players.

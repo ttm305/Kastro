@@ -40,11 +40,11 @@ const ITEMS = [
     ar: 'ترتيب',
   },
   {
-    screen: 'profile' as Screen,
-    iconActive: '👤',
-    icon: '👤',
-    en: 'Hero',
-    ar: 'حسابي',
+    screen: 'rewards' as Screen,
+    iconActive: '🛍️',
+    icon: '🛍️',
+    en: 'Shop',
+    ar: 'المتجر',
   },
 ]
 
