@@ -40,7 +40,7 @@ export function diagLog(scope: string, message: string, data?: unknown) {
   const entry: DiagEntry = { id: nextId++, at: Date.now(), scope, message, data }
   entries = [...entries.slice(-(MAX_ENTRIES - 1)), entry]
   // eslint-disable-next-line no-console
-  console.log(`[KASTRO-DIAG][${scope}] ${message}`, data ?? '')
+  console.log(`[CAREERXP-DIAG][${scope}] ${message}`, data ?? '')
   for (const l of listeners) l(entries)
 }
 

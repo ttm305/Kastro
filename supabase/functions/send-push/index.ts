@@ -41,7 +41,7 @@ import { GoogleAuth } from 'npm:google-auth-library@9'
 const INTERNAL_SECRET = Deno.env.get('PUSH_INTERNAL_SECRET') ?? ''
 const VAPID_PUBLIC_KEY = Deno.env.get('VAPID_PUBLIC_KEY') ?? ''
 const VAPID_PRIVATE_KEY = Deno.env.get('VAPID_PRIVATE_KEY') ?? ''
-const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:support@kastro.app'
+const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:support@careerxp.app'
 
 const FCM_PROJECT_ID = Deno.env.get('FCM_PROJECT_ID') ?? ''
 const FCM_SERVICE_ACCOUNT_JSON = Deno.env.get('FCM_SERVICE_ACCOUNT_JSON') ?? ''
@@ -130,7 +130,7 @@ Deno.serve(async (req: Request) => {
 
   let sent = 0
   let removed = 0
-  const notificationPayload = JSON.stringify({ title: title || 'KASTRO', body: body || '', data: data ?? {} })
+  const notificationPayload = JSON.stringify({ title: title || 'CareerXP', body: body || '', data: data ?? {} })
 
   if (webPushConfigured) {
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
@@ -208,7 +208,7 @@ Deno.serve(async (req: Request) => {
       await Promise.all(
         (tokens as { id: string; token: string; user_id: string }[]).map(async (t) => {
           try {
-            await sendFcm(t.token, title || 'KASTRO', body || '', data ?? {}, badgeByUser.get(t.user_id) ?? 0)
+            await sendFcm(t.token, title || 'CareerXP', body || '', data ?? {}, badgeByUser.get(t.user_id) ?? 0)
             sent++
           } catch (err) {
             const fcmStatus = (err as { fcmStatus?: string })?.fcmStatus

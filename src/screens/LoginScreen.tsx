@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import type { Screen, Lang } from '../App'
 import { OWNER_EMAIL } from '../App'
-import KastroLogo from '../components/KastroLogo'
+import AppLogo from '../components/AppLogo'
 import { useAuth } from '../lib/auth'
 import { getBranches, type Branch } from '../lib/api'
 import { safeTop, safeLeft, safeRight, tapTargetMinHeight } from '../lib/safeArea'
@@ -177,7 +177,7 @@ export default function LoginScreen({ onNavigate: _onNavigate, lang, setLang }: 
       {/* Logo + hero */}
       <div style={{ textAlign: 'center', marginBottom: 32 }} className="animate-slide-up">
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
-          <KastroLogo size={52} wordmark animated />
+          <AppLogo size={52} wordmark animated />
         </div>
 
         <h1

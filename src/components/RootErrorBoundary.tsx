@@ -30,7 +30,7 @@ export default class RootErrorBoundary extends Component<{ children: ReactNode }
 
   componentDidCatch(error: unknown, info: { componentStack?: string | null }) {
     // eslint-disable-next-line no-console
-    console.error('[kastro:RootErrorBoundary] top-level render crash caught', error, info?.componentStack)
+    console.error('[careerxp:RootErrorBoundary] top-level render crash caught', error, info?.componentStack)
   }
 
   handleReload = () => {
@@ -66,14 +66,14 @@ export default class RootErrorBoundary extends Component<{ children: ReactNode }
         <div>
           <p style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Something went wrong</p>
           <p style={{ margin: 0, fontSize: 13, opacity: 0.65, maxWidth: 320 }}>
-            KASTRO hit an unexpected error and couldn't continue. Your data is safe — reloading will fix this.
+            CareerXP hit an unexpected error and couldn't continue. Your data is safe — reloading will fix this.
           </p>
         </div>
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', width: 40, margin: '4px 0' }} />
         <div dir="rtl">
           <p style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>حدث خطأ ما</p>
           <p style={{ margin: 0, fontSize: 13, opacity: 0.65, maxWidth: 320 }}>
-            واجه تطبيق KASTRO خطأً غير متوقع. بياناتك آمنة — إعادة التحميل ستحل المشكلة.
+            واجه تطبيق CareerXP خطأً غير متوقع. بياناتك آمنة — إعادة التحميل ستحل المشكلة.
           </p>
         </div>
         <button

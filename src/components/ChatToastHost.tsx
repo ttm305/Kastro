@@ -98,12 +98,12 @@ export default function ChatToastHost({ lang, onOpenChat }: {
           timersRef.current.set(toastId, t)
         } catch (err) {
           // eslint-disable-next-line no-console
-          console.error('[kastro:ChatToastHost] failed to handle notification', err)
+          console.error('[careerxp:ChatToastHost] failed to handle notification', err)
         }
       }, 'chat-toast')
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[kastro:ChatToastHost] failed to subscribe', err)
+      console.error('[careerxp:ChatToastHost] failed to subscribe', err)
     }
 
     return () => {

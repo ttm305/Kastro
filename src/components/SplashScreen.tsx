@@ -1,7 +1,8 @@
-import KastroLogo from './KastroLogo'
+import AppLogo from './AppLogo'
+import { APP_TAGLINE } from '../lib/brand'
 
 /**
- * Premium KASTRO launch splash — shown while the initial Supabase session
+ * Premium CareerXP launch splash — shown while the initial Supabase session
  * check is in flight (AuthProvider's `ready` flag). Purely presentational;
  * carries no auth/session logic of its own so it can never gate access.
  * Intentionally always dark (brand cosmic backdrop) regardless of the
@@ -40,7 +41,7 @@ export default function SplashScreen() {
           }}
         />
         <div style={{ animation: 'scale-in 0.6s cubic-bezier(0.34,1.56,0.64,1) both' }}>
-          <KastroLogo size={88} animated />
+          <AppLogo size={88} animated />
         </div>
       </div>
 
@@ -53,10 +54,10 @@ export default function SplashScreen() {
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
           }}
         >
-          KAS<span style={{
+          Career<span style={{
             background: 'linear-gradient(135deg, #ffd700, #ff6b35)',
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
-          }}>TRO</span>
+          }}>XP</span>
         </span>
       </div>
 
@@ -66,7 +67,7 @@ export default function SplashScreen() {
           color: 'rgba(200,200,255,0.4)', animation: 'slide-up 0.5s ease-out 0.4s both',
         }}
       >
-        Work. Play. Evolve.
+        {APP_TAGLINE}
       </p>
 
       <div style={{ position: 'absolute', bottom: 48, display: 'flex', gap: 6, animation: 'slide-up 0.5s ease-out 0.55s both' }}>

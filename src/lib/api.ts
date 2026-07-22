@@ -1,9 +1,9 @@
-import { supabase } from './supabaseClient'
+import { supabase, uploadChatMediaWithProgress } from './supabaseClient'
 import type { Tables } from './database.types'
 import { diagLog } from './diagnostics'
 
 // =============================================================================
-// KASTRO data access layer. Every mutation with anti-cheat or economy
+// CareerXP data access layer. Every mutation with anti-cheat or economy
 // implications goes through a SECURITY DEFINER RPC (see the Supabase
 // migrations) — nothing here writes xp/score/points directly to a table.
 // =============================================================================
@@ -71,7 +71,7 @@ export type Branch = Tables<'branches'>
 /**
  * Branch options shown at registration and in the profile editor — a real,
  * owner-managed lookup table (see migration dynamic_branch_management)
- * rather than a hardcoded list, so KASTRO can grow to more branches/
+ * rather than a hardcoded list, so CareerXP can grow to more branches/
  * administrations later without a frontend change: the owner adds/edits/
  * reorders/retires branches from the Branch Management admin screen (see
  * adminApi.ts), and every device picks the change up on next load — no
@@ -108,7 +108,7 @@ export async function getBranches(): Promise<{ error: string | null; data: Branc
 
 function logErr(scope: string, error: unknown) {
   // eslint-disable-next-line no-console
-  console.error(`[kastro:${scope}]`, error)
+  console.error(`[careerxp:${scope}]`, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +720,7 @@ export async function getUserPublicAchievements(userId: string): Promise<PublicA
 // profiles RLS only allows a row's owner to SELECT it directly (profiles_select_self_or_owner),
 // so both discovery paths below go through search_profiles_for_friends() — a SECURITY DEFINER
 // RPC exposing just id/username/level/avatar_url for any authenticated employee, same "public
-// within KASTRO" model as get_public_profiles(). A direct `.from('profiles')` query here would
+// within CareerXP" model as get_public_profiles(). A direct `.from('profiles')` query here would
 // silently return zero rows for anyone but the current user.
 export async function searchUsers(query: string, excludeIds: string[]) {
   if (!query.trim()) return []
@@ -841,6 +841,8 @@ export async function getPresence(userIds: string[]): Promise<FriendPresence[]> 
 // never deletes or marks-read by writing to `messages` directly.
 // ---------------------------------------------------------------------------
 export type ChatMessage = Tables<'messages'>
+/** Per-conversation disappearing-message setting — see set_conversation_disappearing_mode's migration comment for exact semantics of each mode. 'read_leave' is the default and matches the app's original (pre-this-feature) hardcoded behavior exactly. */
+export type DisappearingMode = 'keep_forever' | 'delete_24h' | 'read_leave'
 export type ConversationSummary = {
   conversation_id: string
   other_user_id: string
@@ -850,6 +852,8 @@ export type ConversationSummary = {
   last_message_saved: boolean
   unread_count: number
   other_is_viewing: boolean
+  disappearing_mode: DisappearingMode
+  last_message_type: string | null
 }
 
 /** Gets (or lazily creates) the single conversation between me and a confirmed friend — never duplicated, and reused as-is for in-game chat. */
@@ -953,13 +957,13 @@ export async function sendMessage(conversationId: string, body: string, clientMe
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs)
   const requestPayload = { p_conversation_id: conversationId, p_body: body, p_client_message_id: clientMessageId }
   // eslint-disable-next-line no-console
-  console.debug('[kastro:sendMessage] request', requestPayload)
+  console.debug('[careerxp:sendMessage] request', requestPayload)
   try {
     const { data, error } = await supabase
       .rpc('send_message', requestPayload)
       .abortSignal(controller.signal)
     // eslint-disable-next-line no-console
-    console.debug('[kastro:sendMessage] response', { data, error })
+    console.debug('[careerxp:sendMessage] response', { data, error })
     if (error) {
       logErr('sendMessage', error)
       return { id: null, error: error.message }
@@ -971,7 +975,7 @@ export async function sendMessage(conversationId: string, body: string, clientMe
       ? `Request timed out after ${Math.round(timeoutMs / 1000)}s (connection may have been suspended in the background)`
       : err instanceof Error ? err.message : String(err)
     // eslint-disable-next-line no-console
-    console.error('[kastro:sendMessage] threw', { aborted, err })
+    console.error('[careerxp:sendMessage] threw', { aborted, err })
     return { id: null, error: message }
   } finally {
     window.clearTimeout(timeoutId)
@@ -989,9 +993,22 @@ export async function heartbeatConversation(conversationId: string) {
   await supabase.rpc('heartbeat_conversation', { p_conversation_id: conversationId })
 }
 
-/** Call on unmount/back/close — triggers the permanent server-side deletion of everything I've already read. */
+/** Call on unmount/back/close — triggers the permanent server-side deletion of everything I've already read (only actually deletes anything when the conversation's mode is 'read_leave' — see set_conversation_disappearing_mode). */
 export async function leaveConversation(conversationId: string) {
   const { error } = await supabase.rpc('leave_conversation', { p_conversation_id: conversationId })
+  return { error: error?.message ?? null }
+}
+
+/** Reads a single conversation's current disappearing-message mode — RLS already lets either participant SELECT the conversations row directly, same as getMessages does for messages, so no RPC round trip is needed just to read it. */
+export async function getConversationDisappearingMode(conversationId: string): Promise<DisappearingMode | null> {
+  const { data, error } = await supabase.from('conversations').select('disappearing_mode').eq('id', conversationId).maybeSingle()
+  if (error) { logErr('getConversationDisappearingMode', error); return null }
+  return (data?.disappearing_mode as DisappearingMode | undefined) ?? null
+}
+
+/** Sets this conversation's disappearing-message mode — Keep Forever / Delete After 24 Hours / Delete After Read + Leave, exactly like Snapchat's per-conversation setting. Either participant may change it; it applies to the whole shared conversation, not per-user. */
+export async function setConversationDisappearingMode(conversationId: string, mode: DisappearingMode) {
+  const { error } = await supabase.rpc('set_conversation_disappearing_mode', { p_conversation_id: conversationId, p_mode: mode })
   return { error: error?.message ?? null }
 }
 
@@ -1012,6 +1029,92 @@ export async function getDraft(conversationId: string, userId: string): Promise<
   const { data, error } = await supabase.from('conversation_participants').select('draft_text').eq('conversation_id', conversationId).eq('user_id', userId).maybeSingle()
   if (error) { logErr('getDraft', error); return '' }
   return data?.draft_text ?? ''
+}
+
+// ---------------------------------------------------------------------------
+// Chat media (voice/image/video attachments) — separate from the plain-text
+// send path above (sendMessage/send_message) on purpose: that RPC is
+// working production code and is never touched by any of this. Media lives
+// in the private 'chat-media' storage bucket (RLS-gated to the two
+// conversation participants, see the chat_media_storage_bucket_and_rls
+// migration), never a public bucket like every other bucket in this app.
+// ---------------------------------------------------------------------------
+export type ChatAttachmentType = 'image' | 'video' | 'voice'
+
+const MEDIA_MAX_BYTES: Record<ChatAttachmentType, number> = {
+  image: 8 * 1024 * 1024,
+  video: 50 * 1024 * 1024,
+  voice: 10 * 1024 * 1024,
+}
+const MEDIA_ALLOWED_MIME: Record<ChatAttachmentType, string[]> = {
+  image: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  video: ['video/mp4', 'video/webm', 'video/quicktime'],
+  voice: ['audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/ogg'],
+}
+
+/** Client-side pre-flight validation — a real defense-in-depth layer alongside the bucket's own size/mime allowlist and the send_media_message RPC's server-side checks, not a replacement for either; it just gives an instant, specific error before spending any upload bandwidth. */
+export function validateChatMedia(type: ChatAttachmentType, mime: string, sizeBytes: number): string | null {
+  if (!MEDIA_ALLOWED_MIME[type].includes(mime)) return `Unsupported file type: ${mime}`
+  if (sizeBytes <= 0) return 'File is empty'
+  if (sizeBytes > MEDIA_MAX_BYTES[type]) return `File is too large (max ${Math.round(MEDIA_MAX_BYTES[type] / (1024 * 1024))}MB)`
+  return null
+}
+
+/** Builds the storage object path for a new upload — "{conversationId}/{senderId}/{uuid}.{ext}", matching the folder convention every chat_media_* RLS policy on storage.objects relies on. */
+export function buildChatMediaPath(conversationId: string, senderId: string, ext: string): string {
+  const uuid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${conversationId}/${senderId}/${uuid}.${ext}`
+}
+
+/** Uploads a chat attachment with real progress + cancellation (see uploadChatMediaWithProgress's doc comment for why this bypasses the storage-js client's own upload()). Returns the object path on success — pass it straight into sendMediaMessage. */
+export function uploadChatMedia(path: string, file: Blob, onProgress?: (fraction: number) => void) {
+  return uploadChatMediaWithProgress(path, file, onProgress)
+}
+
+/** Records a media message after its upload has completed. Mirrors sendMessage's idempotency contract (retrying with the same clientMessageId returns the original message instead of duplicating it) and the same conversation-membership/blocked checks — see send_media_message's definition. */
+export async function sendMediaMessage(params: {
+  conversationId: string
+  messageType: ChatAttachmentType
+  mediaPath: string
+  mediaMime: string
+  mediaSizeBytes: number
+  clientMessageId: string
+  caption?: string
+  durationSeconds?: number
+  width?: number
+  height?: number
+  thumbPath?: string
+}): Promise<{ id: string | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('send_media_message', {
+    p_conversation_id: params.conversationId,
+    p_message_type: params.messageType,
+    p_media_path: params.mediaPath,
+    p_media_mime: params.mediaMime,
+    p_media_size_bytes: params.mediaSizeBytes,
+    p_client_message_id: params.clientMessageId,
+    p_caption: params.caption || null,
+    p_media_duration_seconds: params.durationSeconds ?? null,
+    p_media_width: params.width ?? null,
+    p_media_height: params.height ?? null,
+    p_media_thumb_path: params.thumbPath ?? null,
+  })
+  if (error) { logErr('sendMediaMessage', error); return { id: null, error: error.message } }
+  return { id: (data as string) ?? null, error: null }
+}
+
+// Short-lived in-memory cache so re-rendering the same bubble/preview many
+// times (scroll, re-render, half-swipe re-open) doesn't re-request a signed
+// URL every time; entries are simply dropped and re-fetched once expired.
+const mediaUrlCache = new Map<string, { url: string; expiresAt: number }>()
+
+/** Private bucket, so playback/viewing needs a signed URL (getPublicUrl() would 400 — the bucket has public=false), scoped to the requesting user by the same chat_media_select RLS policy that already gates who can even generate one. */
+export async function getChatMediaUrl(path: string, expiresInSeconds = 3600): Promise<string | null> {
+  const cached = mediaUrlCache.get(path)
+  if (cached && cached.expiresAt > Date.now() + 30_000) return cached.url
+  const { data, error } = await supabase.storage.from('chat-media').createSignedUrl(path, expiresInSeconds)
+  if (error || !data) { logErr('getChatMediaUrl', error); return null }
+  mediaUrlCache.set(path, { url: data.signedUrl, expiresAt: Date.now() + expiresInSeconds * 1000 })
+  return data.signedUrl
 }
 
 // ---------------------------------------------------------------------------

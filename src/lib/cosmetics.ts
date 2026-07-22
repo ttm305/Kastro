@@ -31,7 +31,7 @@ import type { CosmeticItem } from './api'
  * never a stale local copy. The table is small (~50 rows), so this is cheap. */
 export async function getCosmeticCatalog(): Promise<CosmeticItem[]> {
   const { data, error } = await supabase.from('cosmetic_items').select('*')
-  if (error) { console.error('[kastro:getCosmeticCatalog]', error); return [] }
+  if (error) { console.error('[careerxp:getCosmeticCatalog]', error); return [] }
   return data ?? []
 }
 

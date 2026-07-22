@@ -1,6 +1,6 @@
 /**
- * Deprecated — retained only because this sandbox cannot delete files
- * once written to the outputs folder. The brand mark now lives in
- * ./KastroLogo.tsx; nothing in the app imports this file anymore.
+ * Deprecated — retained only because this sandbox cannot delete files.
+ * The brand mark now lives in ./AppLogo.tsx (renamed again during the
+ * CareerXP rebrand); nothing in the app imports this file anymore.
  */
-export { default } from './KastroLogo'
+export { default } from './AppLogo'

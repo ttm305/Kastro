@@ -1,5 +1,6 @@
 import type { Lang } from '../App'
-import KastroLogo from './KastroLogo'
+import AppLogo from './AppLogo'
+import { APP_NAME } from '../lib/brand'
 import NotificationsBell from './NotificationsBell'
 import { safeTop, safeLeft, safeRight, tapTarget, tapTargetMinHeight } from '../lib/safeArea'
 
@@ -72,8 +73,8 @@ export default function TopBar({ title, titleAr, lang, setLang, onBack, rightSlo
             <BackIcon isRTL={lang === 'ar'} />
           </button>
         )}
-        {title === 'KASTRO' ? (
-          <KastroLogo size={32} wordmark />
+        {title === APP_NAME ? (
+          <AppLogo size={32} wordmark />
         ) : (
           <h1
             className={lang === 'ar' ? 'font-cairo' : 'font-display'}

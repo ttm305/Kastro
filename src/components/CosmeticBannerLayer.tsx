@@ -77,14 +77,14 @@ export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props)
   // Pause/resume the inline animated SVG the same way the video below is
   // paused: off-screen (IntersectionObserver) and app-backgrounded
   // (visibilitychange). The SVG's own CSS listens for the
-  // `.kastro-anim-paused` class on this wrapper (see the markup generated
+  // `.careerxp-anim-paused` class on this wrapper (see the markup generated
   // for banner_bahrain_waving) and sets `animation-play-state: paused`.
   useEffect(() => {
     if (!canPlaySvg) return
     const el = svgWrapRef.current
     if (!el) return
 
-    const setPaused = (paused: boolean) => el.classList.toggle('kastro-anim-paused', paused)
+    const setPaused = (paused: boolean) => el.classList.toggle('careerxp-anim-paused', paused)
 
     const observer = new IntersectionObserver(
       ([entry]) => {

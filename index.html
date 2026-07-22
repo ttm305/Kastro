@@ -3,10 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>KASTRO — Work. Play. Evolve.</title>
+    <title>CareerXP — Play. Grow. Achieve.</title>
     <meta name="description" content="Bilingual employee learning &amp; gaming platform — Performance Evaluation pilot." />
 
-    <!-- Favicon -->
+    <!-- Favicon. Still the placeholder KASTRO-era mark (unchanged per
+         direction) — swapping to final CareerXP artwork later just means
+         overwriting these image files, no other change needed. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
@@ -14,20 +16,24 @@
 
     <!-- PWA manifest + install identity -->
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="application-name" content="KASTRO" />
+    <meta name="application-name" content="CareerXP" />
     <meta name="theme-color" content="#1a0a3d" />
 
     <!-- iOS home-screen / splash behavior -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="KASTRO" />
+    <meta name="apple-mobile-web-app-title" content="CareerXP" />
 
     <!-- Android / Chrome install identity -->
     <meta name="mobile-web-app-capable" content="yes" />
 
     <!-- Appearance bootstrap: sets data-theme on <html> before first paint so
          there is no flash of the wrong theme while React hydrates. Mirrors
-         the resolution logic in src/lib/theme.tsx — keep them in sync. -->
+         the resolution logic in src/lib/theme.tsx — keep them in sync.
+         The 'kastro-appearance' localStorage key name is intentionally NOT
+         renamed as part of the CareerXP rebrand: it's an internal, invisible
+         storage key, and renaming it would silently reset every existing
+         user's saved Light/Dark/System preference back to default. -->
     <script>
       (function () {
         try {

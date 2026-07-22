@@ -315,8 +315,8 @@ function PushNotificationToggle({ isAr }: { isAr: boolean }) {
       {!supported ? (
         <p style={{ margin: 0, fontSize: 12, color: 'rgba(var(--fg2-rgb),0.5)' }}>
           {isAr
-            ? 'الإشعارات غير مدعومة في هذا المتصفح. على iOS، أضف KASTRO إلى الشاشة الرئيسية أولاً.'
-            : 'Push notifications aren’t supported in this browser. On iOS, add KASTRO to your Home Screen first.'}
+            ? 'الإشعارات غير مدعومة في هذا المتصفح. على iOS، أضف CareerXP إلى الشاشة الرئيسية أولاً.'
+            : 'Push notifications aren’t supported in this browser. On iOS, add CareerXP to your Home Screen first.'}
         </p>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -696,7 +696,7 @@ export default function ProfileScreen({ onNavigate, lang, setLang, userRole = 'p
       )}
 
       {/* Hero banner — priority order: custom cover photo, then an owned/
-          equipped "Profile Banner" cosmetic gradient, then a premium KASTRO
+          equipped "Profile Banner" cosmetic gradient, then a premium CareerXP
           default gradient. Never blank. */}
       <div style={{ position: 'relative', height: 256, overflow: 'hidden', background: profile.header_url || equipped.banner ? undefined : DEFAULT_HERO_GRADIENT }}>
         {profile.header_url ? (

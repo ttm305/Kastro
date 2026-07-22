@@ -40,7 +40,7 @@ const DEFAULT_HEADER_GRADIENT = 'linear-gradient(135deg, #1a0b3d 0%, #4c1d95 45%
  * Read-only profile card for a friend / friend-request / suggestion — reachable
  * from FriendsScreen. Pulls from get_public_profiles + get_user_public_achievements,
  * both SECURITY DEFINER RPCs that expose only the non-sensitive subset of a
- * profile (no email, no access code, no role) — the same "public within KASTRO"
+ * profile (no email, no access code, no role) — the same "public within CareerXP"
  * model the leaderboard and friends list already rely on.
  */
 export default function FriendProfileSheet({ userId, lang, onClose, isFriend, onMessage, onRemove, onBlock }: Props) {
@@ -141,7 +141,7 @@ export default function FriendProfileSheet({ userId, lang, onClose, isFriend, on
             {/* Header band — this user's own cover image (never the viewer's),
                 fetched via the same public get_public_profiles RPC as the
                 rest of this sheet's data, so it's automatically covered by
-                that RPC's existing "public within KASTRO" visibility model
+                that RPC's existing "public within CareerXP" visibility model
                 with no separate read path. Falls back to a premium default
                 gradient, never blank. */}
             <div style={{ position: 'relative', height: 186, marginTop: 14, overflow: 'hidden', background: profile.header_url || equipped?.banner ? undefined : DEFAULT_HEADER_GRADIENT }}>

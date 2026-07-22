@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import DailyRewardModal from '../components/DailyRewardModal'
+import { APP_NAME } from '../lib/brand'
 import Avatar from '../components/Avatar'
 import { useAuth } from '../lib/auth'
 import type { Tables } from '../lib/database.types'
@@ -253,7 +254,7 @@ export default function HomeScreen({ onNavigate, onNavigateToGame, onOpenProfile
         />
       )}
 
-      <TopBar title="KASTRO" lang={lang} setLang={setLang} />
+      <TopBar title={APP_NAME} lang={lang} setLang={setLang} />
 
       {/* Live ticker. No border/divider on this strip — its `border-bottom:
           1px solid rgba(0,212,255,0.1)` was the thin bright-blue horizontal

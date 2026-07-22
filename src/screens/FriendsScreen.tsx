@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { Screen, Lang } from '../App'
 import TopBar from '../components/TopBar'
 import Avatar from '../components/Avatar'
@@ -20,9 +21,11 @@ import {
   getOrCreateConversation,
   getPublicProfilesMap,
   getPresence,
+  getMessages,
   type PublicProfile,
   type ConversationSummary,
   type FriendPresence,
+  type ChatMessage,
 } from '../lib/api'
 import FriendProfileSheet from '../components/FriendProfileSheet'
 import { formatPresence } from '../lib/presenceFormat'
@@ -82,6 +85,104 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
   const [conversationProfiles, setConversationProfiles] = useState<Map<string, PublicProfile>>(new Map())
   const [conversationsLoaded, setConversationsLoaded] = useState(false)
   const [openChat, setOpenChat] = useState<{ conversationId: string; otherUser: { id: string; username: string; avatar_url?: string | null } } | null>(null)
+
+  // --- Half-swipe preview (Snapchat-style) ---
+  // A partial horizontal drag on a Chats-tab row progressively reveals an
+  // expanding panel underneath it, showing the actual last few messages of
+  // that conversation (bottom-anchored, like a real chat) growing in height
+  // as the drag continues — never a static "last message" snippet. Height
+  // and horizontal follow-offset are bound directly to the live pointer
+  // position every frame (no fetch, no navigation) so it tracks the finger
+  // exactly. This NEVER calls openConversation/subscribeToConversation/
+  // heartbeatConversation — getMessages() is a plain read-only select (see
+  // its definition in api.ts), so previewing never marks anything read,
+  // never flips is_viewing, and never changes the unread badge. Releasing
+  // the finger — at any drag distance — always animates the panel closed
+  // and never opens the conversation.
+  const SWIPE_REVEAL_PX = 140 // horizontal drag distance for a fully-open preview
+  const SWIPE_MAX_HEIGHT = 216 // px of revealed message-preview panel at full drag
+  const SWIPE_FOLLOW_PX = 20 // subtle horizontal "follow the finger" offset on the row itself
+  const SWIPE_TAP_GUARD_MS = 250 // ignore taps on a row for this long after a real drag on it ends
+
+  const [swipePreview, setSwipePreview] = useState<{ id: string; progress: number; followPx: number; live: boolean } | null>(null)
+  const swipeStartRef = useRef<{ id: string; x: number; y: number; dragging: boolean; pointerId: number } | null>(null)
+  const swipeCloseTimerRef = useRef<number | null>(null)
+  // Per-row cooldown: a drag that ended on this row suppresses the tap that
+  // the browser fires right after pointerup, AND any other genuine tap that
+  // lands within the guard window — covers "during or immediately after".
+  const lastSwipeEndRef = useRef<Map<string, number>>(new Map())
+  // Cache of recent messages per conversation, loaded lazily the first time
+  // that row is actually dragged (not on every tap) and reused for the rest
+  // of the session so re-swiping the same row is instant.
+  const [previewMessagesByConv, setPreviewMessagesByConv] = useState<Map<string, ChatMessage[]>>(new Map())
+  const [previewLoadingIds, setPreviewLoadingIds] = useState<Set<string>>(new Set())
+
+  function ensurePreviewMessagesLoaded(conversationId: string) {
+    if (previewMessagesByConv.has(conversationId) || previewLoadingIds.has(conversationId)) return
+    setPreviewLoadingIds((prev) => new Set(prev).add(conversationId))
+    // Read-only — getMessages() is a plain `.select()`, it never touches
+    // messages.read_at or conversation_participants.is_viewing, so this is
+    // always safe to call purely for a peek, unlike openConversation().
+    getMessages(conversationId)
+      .then((msgs) => {
+        setPreviewMessagesByConv((prev) => new Map(prev).set(conversationId, msgs.slice(-6)))
+      })
+      .finally(() => {
+        setPreviewLoadingIds((prev) => { const next = new Set(prev); next.delete(conversationId); return next })
+      })
+  }
+
+  function handleChatRowPointerDown(e: ReactPointerEvent, conversationId: string) {
+    if (swipeCloseTimerRef.current) { window.clearTimeout(swipeCloseTimerRef.current); swipeCloseTimerRef.current = null }
+    swipeStartRef.current = { id: conversationId, x: e.clientX, y: e.clientY, dragging: false, pointerId: e.pointerId }
+  }
+
+  function handleChatRowPointerMove(e: ReactPointerEvent, conversationId: string) {
+    const s = swipeStartRef.current
+    if (!s || s.id !== conversationId) return
+    const dx = e.clientX - s.x
+    const dy = e.clientY - s.y
+    if (!s.dragging) {
+      // Small movement threshold + horizontal-dominant check, so normal
+      // vertical list scrolling is never hijacked into a swipe.
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy)) return
+      s.dragging = true
+      try { e.currentTarget.setPointerCapture(s.pointerId) } catch { /* capture is best-effort */ }
+      ensurePreviewMessagesLoaded(conversationId)
+    }
+    // Correct swipe direction per reading direction: LTR reveals on a
+    // rightward drag, RTL reveals on a leftward drag (mirrored, matching
+    // how every other directional gesture in this app follows `isAr`).
+    const dirSign = isAr ? -1 : 1
+    const signedDx = dx * dirSign
+    const progress = Math.max(0, Math.min(1, signedDx / SWIPE_REVEAL_PX))
+    const followPx = Math.max(-SWIPE_FOLLOW_PX, Math.min(SWIPE_FOLLOW_PX, dx / 4))
+    setSwipePreview({ id: conversationId, progress, followPx, live: true })
+  }
+
+  function handleChatRowPointerEnd(conversationId: string, e?: ReactPointerEvent) {
+    const s = swipeStartRef.current
+    if (s && s.id === conversationId) {
+      if (s.dragging) {
+        lastSwipeEndRef.current.set(conversationId, Date.now())
+        if (e) { try { e.currentTarget.releasePointerCapture(s.pointerId) } catch { /* already released */ } }
+      }
+    }
+    swipeStartRef.current = null
+    // Releasing always animates the preview closed, regardless of how far
+    // it was dragged — the conversation never opens from this gesture.
+    setSwipePreview((prev) => (prev?.id === conversationId ? { ...prev, progress: 0, followPx: 0, live: false } : prev))
+    if (swipeCloseTimerRef.current) window.clearTimeout(swipeCloseTimerRef.current)
+    swipeCloseTimerRef.current = window.setTimeout(() => {
+      setSwipePreview((prev) => (prev?.id === conversationId ? null : prev))
+    }, 320)
+  }
+
+  function handleChatRowClick(otherUser: { id: string; username: string; avatar_url?: string | null } | undefined, conversationId: string) {
+    const lastEnd = lastSwipeEndRef.current.get(conversationId) ?? 0
+    if (Date.now() - lastEnd < SWIPE_TAP_GUARD_MS) return
+    if (otherUser) handleOpenChatWith(otherUser)
+  }
 
   const totalUnread = useMemo(() => conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0), [conversations])
 
@@ -323,35 +424,117 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {filteredConversations.map((c) => {
                 const p = conversationProfiles.get(c.other_user_id)
+                const isSwiped = swipePreview?.id === c.conversation_id
+                const swipe = isSwiped ? swipePreview.progress : 0
+                const followPx = isSwiped ? swipePreview.followPx : 0
+                const live = isSwiped ? swipePreview.live : false
+                const panelHeight = swipe * SWIPE_MAX_HEIGHT
+                const previewMsgs = previewMessagesByConv.get(c.conversation_id) ?? []
+                const previewLoading = previewLoadingIds.has(c.conversation_id)
                 return (
                   <div
                     key={c.conversation_id}
-                    className="glass-card"
-                    style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
-                    onClick={() => p && handleOpenChatWith({ id: p.id, username: p.username, avatar_url: p.avatar_url })}
+                    style={{ position: 'relative', zIndex: swipe > 0 ? 40 : undefined }}
                   >
-                    <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <Avatar url={p?.avatar_url} size={48} style={{ border: '2px solid rgba(124,58,237,0.3)' }} />
-                      <div style={{ position: 'absolute', bottom: 0, right: isAr ? 'auto' : 0, left: isAr ? 0 : 'auto', width: 12, height: 12, borderRadius: '50%', background: p?.is_online ? '#10b981' : '#4b5563', border: '2px solid #07071a' }} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                        <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--foreground)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{p?.username ?? '…'}</p>
-                        {c.last_message_at && <span style={{ fontSize: 10.5, color: 'rgba(var(--fg-rgb),0.35)', flexShrink: 0 }}>{timeAgo(c.last_message_at, isAr)}</span>}
+                    <div
+                      className="glass-card"
+                      style={{
+                        position: 'relative', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+                        touchAction: 'pan-y', transform: `translateX(${followPx}px)`,
+                        transition: live ? 'none' : 'transform 0.28s cubic-bezier(.2,.8,.2,1)',
+                      }}
+                      onClick={() => handleChatRowClick(p ? { id: p.id, username: p.username, avatar_url: p.avatar_url } : undefined, c.conversation_id)}
+                      onPointerDown={(e) => handleChatRowPointerDown(e, c.conversation_id)}
+                      onPointerMove={(e) => handleChatRowPointerMove(e, c.conversation_id)}
+                      onPointerUp={(e) => handleChatRowPointerEnd(c.conversation_id, e)}
+                      onPointerCancel={(e) => handleChatRowPointerEnd(c.conversation_id, e)}
+                    >
+                      <div style={{ position: 'relative', flexShrink: 0 }}>
+                        <Avatar url={p?.avatar_url} size={48} style={{ border: '2px solid rgba(124,58,237,0.3)' }} />
+                        <div style={{ position: 'absolute', bottom: 0, right: isAr ? 'auto' : 0, left: isAr ? 0 : 'auto', width: 12, height: 12, borderRadius: '50%', background: p?.is_online ? '#10b981' : '#4b5563', border: '2px solid #07071a' }} />
                       </div>
-                      <p style={{ margin: '2px 0 0', fontSize: 12, color: c.unread_count > 0 ? 'var(--foreground)' : 'rgba(var(--fg-rgb),0.4)', fontWeight: c.unread_count > 0 ? 600 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {c.last_message_saved && <span style={{ fontSize: 10, flexShrink: 0 }}>📌</span>}
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {c.last_message_body
-                            ? `${c.last_message_from_me ? (isAr ? 'أنت: ' : 'You: ') : ''}${c.last_message_body}`
-                            : (isAr ? 'لا رسائل حالياً' : 'No messages yet')}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                          <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--foreground)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>@{p?.username ?? '…'}</p>
+                          {c.last_message_at && <span style={{ fontSize: 10.5, color: 'rgba(var(--fg-rgb),0.35)', flexShrink: 0 }}>{timeAgo(c.last_message_at, isAr)}</span>}
+                        </div>
+                        <p style={{ margin: '2px 0 0', fontSize: 12, color: c.unread_count > 0 ? 'var(--foreground)' : 'rgba(var(--fg-rgb),0.4)', fontWeight: c.unread_count > 0 ? 600 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {c.last_message_saved && <span style={{ fontSize: 10, flexShrink: 0 }}>📌</span>}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {(() => {
+                              const prefix = c.last_message_from_me ? (isAr ? 'أنت: ' : 'You: ') : ''
+                              if (c.last_message_body) return `${prefix}${c.last_message_body}`
+                              if (c.last_message_type === 'image') return `${prefix}${isAr ? '📷 صورة' : '📷 Photo'}`
+                              if (c.last_message_type === 'video') return `${prefix}${isAr ? '🎥 فيديو' : '🎥 Video'}`
+                              if (c.last_message_type === 'voice') return `${prefix}${isAr ? '🎤 رسالة صوتية' : '🎤 Voice message'}`
+                              return isAr ? 'لا رسائل حالياً' : 'No messages yet'
+                            })()}
+                          </span>
+                        </p>
+                      </div>
+                      {c.unread_count > 0 && (
+                        <span style={{ minWidth: 20, height: 20, borderRadius: 10, background: '#ff4785', color: '#fff', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 }}>
+                          {c.unread_count > 9 ? '9+' : c.unread_count}
                         </span>
-                      </p>
+                      )}
                     </div>
-                    {c.unread_count > 0 && (
-                      <span style={{ minWidth: 20, height: 20, borderRadius: 10, background: '#ff4785', color: '#fff', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 }}>
-                        {c.unread_count > 9 ? '9+' : c.unread_count}
-                      </span>
+
+                    {/* Half-swipe preview panel — progressively reveals the
+                        actual recent messages of this conversation, growing
+                        downward from underneath the row exactly with the
+                        drag distance. Read-only data (getMessages, a plain
+                        select); never calls openConversation/heartbeat, so
+                        it can never mark anything read or change the unread
+                        badge. Height/opacity are driven straight off pointer
+                        position with no transition while `live`, and only
+                        animate closed once the finger lifts. */}
+                    {panelHeight > 0 && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 40,
+                          height: panelHeight, overflow: 'hidden',
+                          borderRadius: '0 0 16px 16px',
+                          background: 'var(--surface-1)',
+                          border: swipe > 0.02 ? '1px solid rgba(124,58,237,0.25)' : 'none',
+                          borderTop: 'none',
+                          boxShadow: swipe > 0.02 ? '0 18px 34px rgba(0,0,0,0.4)' : 'none',
+                          transition: live ? 'none' : 'height 0.3s cubic-bezier(.2,.8,.2,1), box-shadow 0.3s ease',
+                        }}
+                      >
+                        <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 6, padding: '10px 14px 12px' }}>
+                          {previewLoading && previewMsgs.length === 0 && (
+                            <p style={{ margin: 0, textAlign: 'center', fontSize: 11, color: 'rgba(var(--fg-rgb),0.4)' }}>{isAr ? 'جارٍ التحميل...' : 'Loading…'}</p>
+                          )}
+                          {!previewLoading && previewMsgs.length === 0 && (
+                            <p style={{ margin: 0, textAlign: 'center', fontSize: 11, color: 'rgba(var(--fg-rgb),0.35)' }}>{isAr ? 'لا توجد رسائل بعد' : 'No messages yet'}</p>
+                          )}
+                          {previewMsgs.map((m) => {
+                            const mine = m.sender_id === myId
+                            const label = m.body
+                              ? m.body
+                              : m.message_type === 'image' ? (isAr ? '📷 صورة' : '📷 Photo')
+                              : m.message_type === 'video' ? (isAr ? '🎥 فيديو' : '🎥 Video')
+                              : m.message_type === 'voice' ? (isAr ? '🎤 رسالة صوتية' : '🎤 Voice message')
+                              : ''
+                            return (
+                              <div key={m.id} style={{ display: 'flex', justifyContent: mine ? 'flex-end' : 'flex-start' }}>
+                                <div
+                                  style={{
+                                    maxWidth: '80%', padding: '6px 10px', borderRadius: mine ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+                                    background: mine ? 'linear-gradient(135deg, #7c3aed, #4f46e5)' : 'rgba(var(--fg-rgb),0.08)',
+                                    color: mine ? '#fff' : 'var(--foreground)',
+                                    fontSize: 11.5, lineHeight: 1.35, wordBreak: 'break-word',
+                                    direction: m.body && /[؀-ۿ]/.test(m.body) ? 'rtl' : 'ltr',
+                                  }}
+                                >
+                                  {label}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
                     )}
                   </div>
                 )

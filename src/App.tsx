@@ -181,7 +181,7 @@ function AppShell() {
     }
 
     function handleSwMessage(event: MessageEvent) {
-      if (event.data?.type === 'kastro-open-chat') {
+      if (event.data?.type === 'careerxp-open-chat') {
         openFromChatTarget(event.data.conversationId, event.data.fromUserId, event.data.fromUsername)
       }
     }

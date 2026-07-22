@@ -651,6 +651,13 @@ input::placeholder, textarea::placeholder { color: rgba(var(--fg-rgb),0.25); }
   50% { opacity: 0.5; transform: scale(0.8); }
 }
 
+/* Premium message-bubble entrance for ChatConversation — new messages (sent
+   or received) settle in with a soft rise + scale instead of popping in. */
+@keyframes chat-bubble-in {
+  0% { opacity: 0; transform: translateY(6px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @keyframes float-up {
   0% { opacity: 0; transform: translateY(0); }
   20% { opacity: 1; }

@@ -1,4 +1,4 @@
-// KASTRO — access-code-gated registration for internal employees.
+// CareerXP — access-code-gated registration for internal employees.
 // Public endpoint (no JWT required — the caller isn't signed in yet).
 // The access code IS the gate: Supabase's default auth.signUp() is
 // intentionally never used from the client, because it has no concept
@@ -147,8 +147,8 @@ Deno.serve(async (req: Request) => {
   await admin.from("activity_log").insert({
     user_id: created.user.id,
     event_type: "account_registered",
-    message: `Welcome to KASTRO, ${username}!`,
-    message_ar: `مرحباً بك في KASTRO، ${username}!`,
+    message: `Welcome to CareerXP, ${username}!`,
+    message_ar: `مرحباً بك في CareerXP، ${username}!`,
   });
 
   return json({ success: true, userId: created.user.id });

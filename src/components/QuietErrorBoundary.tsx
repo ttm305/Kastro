@@ -23,7 +23,7 @@ export default class QuietErrorBoundary extends Component<{ children: ReactNode 
 
   componentDidCatch(error: unknown) {
     // eslint-disable-next-line no-console
-    console.error('[kastro:QuietErrorBoundary] suppressed a render error to keep the app usable', error)
+    console.error('[careerxp:QuietErrorBoundary] suppressed a render error to keep the app usable', error)
   }
 
   render() {

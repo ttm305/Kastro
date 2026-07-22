@@ -2293,6 +2293,7 @@ export type Database = {
           user_b: string
           created_at: string
           last_message_at: string | null
+          disappearing_mode: string
         }
         Insert: {
           id?: string
@@ -2300,6 +2301,7 @@ export type Database = {
           user_b: string
           created_at?: string
           last_message_at?: string | null
+          disappearing_mode?: string
         }
         Update: {
           id?: string
@@ -2307,6 +2309,7 @@ export type Database = {
           user_b?: string
           created_at?: string
           last_message_at?: string | null
+          disappearing_mode?: string
         }
         Relationships: []
       }
@@ -2342,7 +2345,7 @@ export type Database = {
           id: string
           conversation_id: string
           sender_id: string
-          body: string
+          body: string | null
           client_message_id: string
           source: string
           created_at: string
@@ -2351,12 +2354,20 @@ export type Database = {
           is_saved: boolean
           saved_at: string | null
           saved_by: string | null
+          message_type: string
+          media_path: string | null
+          media_thumb_path: string | null
+          media_mime: string | null
+          media_size_bytes: number | null
+          media_duration_seconds: number | null
+          media_width: number | null
+          media_height: number | null
         }
         Insert: {
           id?: string
           conversation_id: string
           sender_id: string
-          body: string
+          body?: string | null
           client_message_id: string
           source?: string
           created_at?: string
@@ -2365,12 +2376,20 @@ export type Database = {
           is_saved?: boolean
           saved_at?: string | null
           saved_by?: string | null
+          message_type?: string
+          media_path?: string | null
+          media_thumb_path?: string | null
+          media_mime?: string | null
+          media_size_bytes?: number | null
+          media_duration_seconds?: number | null
+          media_width?: number | null
+          media_height?: number | null
         }
         Update: {
           id?: string
           conversation_id?: string
           sender_id?: string
-          body?: string
+          body?: string | null
           client_message_id?: string
           source?: string
           created_at?: string
@@ -2379,6 +2398,14 @@ export type Database = {
           is_saved?: boolean
           saved_at?: string | null
           saved_by?: string | null
+          message_type?: string
+          media_path?: string | null
+          media_thumb_path?: string | null
+          media_mime?: string | null
+          media_size_bytes?: number | null
+          media_duration_seconds?: number | null
+          media_width?: number | null
+          media_height?: number | null
         }
         Relationships: []
       }

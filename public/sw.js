@@ -1,16 +1,16 @@
-// KASTRO push service worker.
+// CareerXP push service worker.
 //
 // Scope is intentionally narrow — this is not an offline/asset-caching
 // service worker, only a push-notification handler. It:
 //   1. Renders an OS-level notification when a Web Push message arrives
 //      while the app is backgrounded or fully closed (the entire point of
 //      Web Push: reaching the user outside the tab).
-//   2. On tap, focuses an already-open KASTRO tab/window if one exists
+//   2. On tap, focuses an already-open CareerXP tab/window if one exists
 //      (and tells it which conversation to open via postMessage), or opens
 //      a fresh one with the target conversation encoded in the URL if not.
 
 self.addEventListener('push', (event) => {
-  let payload = { title: 'KASTRO', body: '', data: {} }
+  let payload = { title: 'CareerXP', body: '', data: {} }
   try {
     if (event.data) payload = event.data.json()
   } catch {
@@ -19,12 +19,12 @@ self.addEventListener('push', (event) => {
     } catch { /* no usable payload, fall back to defaults */ }
   }
 
-  const title = payload.title || 'KASTRO'
+  const title = payload.title || 'CareerXP'
   const options = {
     body: payload.body || '',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    tag: payload.data && payload.data.conversation_id ? `kastro-chat-${payload.data.conversation_id}` : undefined,
+    tag: payload.data && payload.data.conversation_id ? `careerxp-chat-${payload.data.conversation_id}` : undefined,
     renotify: true,
     data: payload.data || {},
   }
@@ -48,7 +48,7 @@ self.addEventListener('notificationclick', (event) => {
         // conversation via postMessage instead of a full navigation/reload.
         if ('focus' in client) {
           await client.focus()
-          client.postMessage({ type: 'kastro-open-chat', conversationId, fromUserId: data.from_user_id, fromUsername: data.from_username })
+          client.postMessage({ type: 'careerxp-open-chat', conversationId, fromUserId: data.from_user_id, fromUsername: data.from_username })
           return
         }
       }

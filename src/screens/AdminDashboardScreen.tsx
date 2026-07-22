@@ -590,8 +590,8 @@ function OverviewTab({ lang, loading, users, games, stats, dau }: { lang:Lang; l
 
       {/* Exports — genuine client-side CSV of the live users/games data (no export backend exists) */}
       <div style={{ display:'flex', gap:8 }}>
-        <button style={{ ...S.ghost, flex:1, justifyContent:'center', fontSize:12 }} onClick={()=>exportCsv(users as unknown as Record<string,unknown>[], 'kastro-users.csv')}><IcoDown/> {ar?'تصدير CSV':'Export CSV'}</button>
-        <button style={{ ...S.ghost, flex:1, justifyContent:'center', fontSize:12 }} onClick={()=>exportCsv(games as unknown as Record<string,unknown>[], 'kastro-games.csv')}><IcoDown/> {ar?'تصدير Excel':'Export Excel'}</button>
+        <button style={{ ...S.ghost, flex:1, justifyContent:'center', fontSize:12 }} onClick={()=>exportCsv(users as unknown as Record<string,unknown>[], 'careerxp-users.csv')}><IcoDown/> {ar?'تصدير CSV':'Export CSV'}</button>
+        <button style={{ ...S.ghost, flex:1, justifyContent:'center', fontSize:12 }} onClick={()=>exportCsv(games as unknown as Record<string,unknown>[], 'careerxp-games.csv')}><IcoDown/> {ar?'تصدير Excel':'Export Excel'}</button>
       </div>
     </div>
   )
@@ -1842,7 +1842,7 @@ function GamesTab({ lang, loading, games, wau, mau }: { lang:Lang; loading:boole
   const exportGames = () => downloadCsv(games.map(g=>({
     name:g.name, nameAr:g.nameAr, plays:g.plays, avgScore:g.avgScore, avgTime:g.avgTime,
     uniquePlayers:g.uniquePlayers, completion:g.completion, hardestQuestion:g.hardestQ,
-  })), 'kastro-game-analytics.csv')
+  })), 'careerxp-game-analytics.csv')
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
@@ -3353,7 +3353,7 @@ function LogTab({ lang, loading, log }: { lang:Lang; loading:boolean; log:AdminL
       </div>
 
       {/* Export — genuine client-side CSV of the (filtered) live admin log */}
-      <button style={{...S.ghost,alignSelf:'flex-start',fontSize:12}} onClick={()=>downloadCsv(filtered.map(e=>({timestamp:e.timestamp,action:e.action,category:e.category,target:e.target,detail:e.detail})),'kastro-admin-log.csv')}><IcoDown/> {ar?'تصدير السجل':'Export Log'}</button>
+      <button style={{...S.ghost,alignSelf:'flex-start',fontSize:12}} onClick={()=>downloadCsv(filtered.map(e=>({timestamp:e.timestamp,action:e.action,category:e.category,target:e.target,detail:e.detail})),'careerxp-admin-log.csv')}><IcoDown/> {ar?'تصدير السجل':'Export Log'}</button>
 
       {/* Count */}
       <div style={{fontSize:11,color:'rgba(var(--fg2-rgb),0.4)'}}>{filtered.length} {ar?'حدث':'events'}</div>
