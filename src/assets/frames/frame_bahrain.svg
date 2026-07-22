@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 240 240">
+
+<path fill-rule="evenodd" fill="#DA291C" d="
+  M -20,100 a 120,120 0 1,0 240,0 a 120,120 0 1,0 -240,0 Z
+  M 0,100 a 100,100 0 1,1 200,0 a 100,100 0 1,1 -200,0 Z
+"/>
+<polygon points="58.6,-12.6 100.0,0.0 141.4,-12.6" fill="#ffffff"/>
+<polygon points="194.4,25.9 195.1,69.1 219.9,104.5" fill="#ffffff"/>
+<polygon points="199.7,166.8 158.8,180.9 132.8,215.4" fill="#ffffff"/>
+<polygon points="67.2,215.4 41.2,180.9 0.3,166.8" fill="#ffffff"/>
+<polygon points="-19.9,104.5 4.9,69.1 5.6,25.9" fill="#ffffff"/>
+<circle cx="100" cy="100" r="119.2" fill="none" stroke="#fff" stroke-width="1.6"/>
+<circle cx="100" cy="100" r="100.8" fill="none" stroke="#fff" stroke-width="1.6"/>
+</svg>

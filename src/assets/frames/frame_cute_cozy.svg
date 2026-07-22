@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 240 240">
+<defs><linearGradient id="ctring" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fbcfe8"/><stop offset="50%" stop-color="#c4b5fd"/><stop offset="100%" stop-color="#a7f3d0"/></linearGradient></defs>
+<circle cx="100" cy="100" r="107.0" fill="none" stroke="url(#ctring)" stroke-width="14" opacity="1"/>
+<circle cx="100.0" cy="-16.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="158.0" cy="-0.5" r="4.2" fill="url(#ctring)"/>
+<circle cx="200.5" cy="42.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="216.0" cy="100.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="200.5" cy="158.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="158.0" cy="200.5" r="4.2" fill="url(#ctring)"/>
+<circle cx="100.0" cy="216.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="42.0" cy="200.5" r="4.2" fill="url(#ctring)"/>
+<circle cx="-0.5" cy="158.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="-16.0" cy="100.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="-0.5" cy="42.0" r="4.2" fill="url(#ctring)"/>
+<circle cx="42.0" cy="-0.5" r="4.2" fill="url(#ctring)"/>
+</svg>

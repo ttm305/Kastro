@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "npm run validate:frames && tsc -b && vite build",
+    "validate:frames": "node --experimental-strip-types scripts/validate-frames.ts",
     "preview": "vite preview",
     "format": "oxfmt",
     "test": "vitest run",

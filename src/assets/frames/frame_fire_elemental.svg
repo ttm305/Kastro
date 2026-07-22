@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 240 240">
+<defs><radialGradient id="frring" cx="50%" cy="70%" r="80%"><stop offset="0%" stop-color="#fde047"/><stop offset="50%" stop-color="#f97316"/><stop offset="100%" stop-color="#b91c1c"/></radialGradient></defs>
+<circle cx="100" cy="100" r="107.0" fill="none" stroke="url(#frring)" stroke-width="14" opacity="1"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(-90 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(-64 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(-39 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(-13 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(13 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(39 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(64 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(90 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(116 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(141 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(167 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(193 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(219 100 100)"/>
+<path d="M 214.0 100.0 q5 -4 0 -8 q-5 4 0 8 z" fill="url(#frring)" transform="rotate(244 100 100)"/>
+</svg>

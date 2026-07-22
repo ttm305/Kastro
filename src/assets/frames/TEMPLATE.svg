@@ -1,0 +1,50 @@
+<!--
+  AVATAR FRAME TEMPLATE -- start every new frame from this file.
+
+  Full rules: /AVATAR_FRAME_STANDARD.md at the repo root. Read that before
+  changing anything below.
+
+  What is fixed, and must NEVER be changed per-frame:
+    viewBox           -20 -20 240 240   (= FRAME_CANVAS_SIZE, 1:1 square)
+    ring center        100 100          (= CENTER)
+    ring inner edge     r=100           (= FRAME_INNER_RADIUS = PHOTO_RADIUS)
+    usable outer edge   r=120           (= FRAME_OUTER_RADIUS_MAX)
+
+  What you are free to change:
+    - the ring's stroke color/gradient (the <linearGradient> below)
+    - the ring's stroke-width, AS LONG AS you recompute r so that
+      r - stroke-width/2 == 100 exactly (r = 100 + stroke-width/2).
+      The base ring below uses stroke-width="14", so r="107.0".
+    - the outward decoration (the placeholder dot below): its shape,
+      count, color, and position, as long as every part of it stays at
+      radius >= 100 (touching the photo edge is fine; crossing inward is
+      not) and radius <= 120 (the canvas/overhang edge).
+
+  To build a new frame:
+    1. Copy this file to src/assets/frames/frame_<your_id>.svg
+    2. Change the gradient colors on line 2 to match your theme.
+    3. If you want a different ring thickness, change stroke-width AND
+       recompute r (see formula above) on the ring <circle>.
+    4. Replace the placeholder decoration (the single dot near the top)
+       with your own outward ornaments -- copy/rotate it around the ring
+       the same way frame_cute_cozy.svg or frame_wizard_school.svg do,
+       or use a <path>/<polygon>/<ellipse> as long as it stays in [100,120].
+    5. Run `npm run validate:frames` (or `pnpm validate:frames`). It will
+       tell you exactly which shape violates the standard and by how much
+       if anything is wrong -- fix the asset, not the tolerance.
+    6. Never add a custom AVATAR_DIAMETER, PHOTO_RADIUS, FRAME_INNER_RADIUS,
+       or scale/offset anywhere for your new frame. There is no such thing
+       as a per-frame size -- every frame inherits Solar Frame's geometry
+       automatically via this shared canvas/ring layout.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 240 240">
+<defs><linearGradient id="tpring" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#9ca3af"/><stop offset="100%" stop-color="#4b5563"/></linearGradient></defs>
+<!-- Base ring: inner edge sits exactly at r=100 (=107.0 - 14/2). Change
+     the gradient/stroke-width for your theme, but keep r = 100 + stroke-width/2. -->
+<circle cx="100" cy="100" r="107.0" fill="none" stroke="url(#tpring)" stroke-width="14" opacity="1"/>
+<!-- Placeholder outward decoration: a single dot at the 12 o'clock
+     position, radius 4 at distance 116 from center (well inside the
+     [100,120] budget). Replace/duplicate this around the ring for your
+     own theme -- see frame_cute_cozy.svg for a full 12-dot example. -->
+<circle cx="100.0" cy="-16.0" r="4" fill="url(#tpring)"/>
+</svg>

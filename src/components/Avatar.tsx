@@ -1,7 +1,42 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { BUILTIN_AVATARS, type CosmeticItem } from '../lib/api'
+import { FRAME_OVERHANG_SCALE } from '../lib/avatarFrameStandard'
 
 const DEFAULT_GRADIENT = 'linear-gradient(135deg, #7c3aed, #00d4ff)'
+
+/**
+ * Shared geometry standard for every image-overlay frame (frame.image_url
+ * set). The photo is NEVER resized for a frame -- it renders at exactly the
+ * same diameter as Solar Frame's photo (100% of the avatar box, zero
+ * shrink), so there is never a visible size difference between an avatar
+ * wearing Solar Frame and one wearing any other frame.
+ *
+ * That means the frame's inner boundary and the photo's true edge are the
+ * *same circle* (radius = size/2, zero gap by definition -- there's no
+ * space between "photo edge" and "frame inner edge" because they're the
+ * identical line). For the frame to draw anything without painting over
+ * the photo, every frame pixel must fall strictly outside that circle --
+ * which means the frame image is deliberately rendered in a container
+ * larger than the avatar box (FRAME_OVERHANG_SCALE), overhanging outward
+ * around the plain avatar circle the same way a badge/decoration sits
+ * around a Discord-style avatar. The avatar's own layout footprint (what
+ * other flex/grid code measures) is untouched -- only the frame <img>
+ * visually extends past it, with pointer-events:none so it never affects
+ * hit-testing or spacing.
+ *
+ * Solar Frame itself is untouched: it has no `image_url`, so it never
+ * enters this path and keeps using its own CSS ring exactly as before.
+ *
+ * Every new frame SVG asset must match this exactly: fully transparent for
+ * radius < PHOTO_RADIUS (in the shared AVATAR_DIAMETER-unit coordinate
+ * space centered on the avatar), with the *inner edge* of every solid
+ * shape -- not just its center -- at radius >= PHOTO_RADIUS. Decoration
+ * may extend from there out to FRAME_OUTER_RADIUS_MAX. These numbers are
+ * NOT redefined here -- FRAME_OVERHANG_SCALE is imported directly from
+ * src/lib/avatarFrameStandard.ts, the single source of truth documented in
+ * /AVATAR_FRAME_STANDARD.md. Do not reintroduce a local copy of this
+ * constant or any frame-specific sizing/offset logic in this file.
+ */
 
 function PersonSilhouette({ size }: { size: number }) {
   return (
@@ -50,12 +85,10 @@ interface AvatarProps {
  *  - null/unrecognized → the original generic gradient placeholder
  *
  * Frame overlay (layer 3): when `frame.image_url` is set, it's rendered as
- * an absolutely-positioned image using exactly `position: absolute; inset:
- * 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none`
- * over the *same* `size x size` box as the avatar — same center point, same
- * square container, 1:1 aspect ratio, no per-frame margins/transforms, no
- * overhang past the box. Frame art must be authored to the photo's edge,
- * not beyond it.
+ * an absolutely-positioned image centered on the avatar, sized to
+ * `size * FRAME_OVERHANG_SCALE` (larger than the avatar box) so its
+ * decorations have room to extend outward from the photo's true edge
+ * without ever drawing inside it. The photo itself is never resized.
  *
  * Critical: when a real overlay image is used, any legacy `border`/
  * `boxShadow` passed via `style` is intentionally dropped from the inner
@@ -70,6 +103,9 @@ interface AvatarProps {
 export default function Avatar({ url, size, alt = '', className, style, frame, effect, indicator }: AvatarProps) {
   const frameOverlayUrl = frame?.image_url || null
 
+  // The photo always renders at the full avatar box size -- identical to
+  // Solar Frame, identical to no-frame-equipped. Frames never change how
+  // large the photo appears.
   const inner: CSSProperties = {
     width: size,
     height: size,
@@ -82,9 +118,9 @@ export default function Avatar({ url, size, alt = '', className, style, frame, e
     ...style,
   }
 
-  // Real frame artwork present: strip any conflicting ring styling so the
-  // photo renders at full size with nothing but the frame overlay drawing
-  // the ring on top of it.
+  // Real frame artwork present: strip any conflicting ring styling -- the
+  // frame overlay below draws its own ring entirely outside the photo, so a
+  // CSS border here would be redundant/conflicting.
   if (frameOverlayUrl) {
     inner.border = 'none'
     inner.boxShadow = 'none'
@@ -120,12 +156,18 @@ export default function Avatar({ url, size, alt = '', className, style, frame, e
   return (
     <div
       className={className}
-      style={{ position: 'relative', width: size, height: size, aspectRatio: '1 / 1', flexShrink: 0 }}
+      style={{ position: 'relative', width: size, height: size, aspectRatio: '1 / 1', flexShrink: 0, overflow: 'visible' }}
     >
-      {/* Layer 1+2: avatar background + image */}
+      {/* Layer 1+2: avatar background + image — always exactly `size`, never resized for a frame */}
       <div style={inner}>{photo}</div>
 
-      {/* Layer 3: frame overlay — same box as the avatar, no overhang, no per-frame margins/transforms */}
+      {/* Layer 3: frame overlay — centered on the same point as the avatar
+          but rendered at size*FRAME_OVERHANG_SCALE (larger than the photo
+          box) so decorations have room to extend outward from the photo's
+          true edge without ever drawing inside it. pointer-events:none so
+          the overhang never affects clicks/hit-testing; the layout box
+          other code measures (the outer `size x size` div above) is
+          unchanged, only this image visually overflows it. */}
       {frameOverlayUrl && (
         <img
           src={frameOverlayUrl}
@@ -134,9 +176,11 @@ export default function Avatar({ url, size, alt = '', className, style, frame, e
           draggable={false}
           style={{
             position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
+            top: '50%',
+            left: '50%',
+            width: `${FRAME_OVERHANG_SCALE * 100}%`,
+            height: `${FRAME_OVERHANG_SCALE * 100}%`,
+            transform: 'translate(-50%, -50%)',
             objectFit: 'contain',
             pointerEvents: 'none',
             zIndex: 2,

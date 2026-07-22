@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -20 240 240">
+<defs><linearGradient id="spring" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#1e3a8a"/></linearGradient></defs>
+<circle cx="100" cy="100" r="104.0" fill="none" stroke="url(#spring)" stroke-width="8" opacity="1"/><circle cx="100" cy="100" r="119" fill="none" stroke="url(#spring)" stroke-width="2" opacity="0.6"/>
+<circle cx="100.0" cy="-16.0" r="2.2" fill="#ffffff"/>
+<circle cx="158.0" cy="-0.5" r="2.2" fill="#ffffff"/>
+<circle cx="200.5" cy="42.0" r="2.2" fill="#ffffff"/>
+<circle cx="216.0" cy="100.0" r="2.2" fill="#ffffff"/>
+<circle cx="200.5" cy="158.0" r="2.2" fill="#ffffff"/>
+<circle cx="158.0" cy="200.5" r="2.2" fill="#ffffff"/>
+<circle cx="100.0" cy="216.0" r="2.2" fill="#ffffff"/>
+<circle cx="42.0" cy="200.5" r="2.2" fill="#ffffff"/>
+<circle cx="-0.5" cy="158.0" r="2.2" fill="#ffffff"/>
+<circle cx="-16.0" cy="100.0" r="2.2" fill="#ffffff"/>
+<circle cx="-0.5" cy="42.0" r="2.2" fill="#ffffff"/>
+<circle cx="42.0" cy="-0.5" r="2.2" fill="#ffffff"/>
+</svg>
