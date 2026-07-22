@@ -71,7 +71,9 @@ function Toast({ msg, visible, color = '#00e676' }: { msg: string; visible: bool
   )
 }
 
-function ItemPreviewVisual({ item, size = 88, avatarUrl }: { item: ShopItem; size?: number; avatarUrl?: string | null }) {
+function ItemPreviewVisual({
+  item, size = 88, avatarUrl, equippedFrame, username,
+}: { item: ShopItem; size?: number; avatarUrl?: string | null; equippedFrame?: ShopItem | null; username?: string | null }) {
   // Frame ring/glow and banner gradient-keyword translation now live in
   // src/lib/cosmetics.ts — the single source of truth every screen that
   // renders an equipped cosmetic shares, so the shop preview always matches
@@ -99,10 +101,33 @@ function ItemPreviewVisual({ item, size = 88, avatarUrl }: { item: ShopItem; siz
     // (6) "show a small live preview in the Shop" — via the same component
     // every equipped-banner surface in the app uses, so what a player sees
     // here before buying is exactly what they'll see once equipped.
+    //
+    // No icon/emoji is stamped on top of real banner artwork (image_url,
+    // video_url, or an animated_svg) — that was the exact bug reported
+    // ("a flag emoji placed in the middle" / "a smaller flag floating
+    // inside"). The icon glyph is only shown as a last-resort placeholder
+    // for the handful of legacy items that still have nothing but a flat
+    // CSS-gradient fallback and no real art behind them yet.
+    const hasRealArt = !!(item.image_url || item.video_url || item.media_type === 'animated_svg')
+    // Miniature profile mockup composited on top: avatar (with the
+    // player's actual equipped frame, if any) + username, together with
+    // the banner — so buyers see what their real header will look like,
+    // not a bare rectangle. Requirement: "For headers: show a miniature
+    // profile preview; include avatar, frame, username and banner
+    // together; animated banners must animate in the preview."
+    const avatarSize = Math.round(size * 0.42)
     return (
-      <div style={{ width: size * 1.6, height: size, borderRadius: 16, position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
+      <div style={{ width: size * 1.8, height: size * 1.15, borderRadius: 16, position: 'relative', overflow: 'hidden', border: '1px solid rgba(var(--fg-rgb),0.1)' }}>
         <CosmeticBannerLayer banner={item} fallbackGradient="linear-gradient(135deg,#0d0d28,#1a0a3d)" />
-        <span style={{ position: 'relative', zIndex: 1, fontSize: size * 0.35, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.5))' }}>{item.icon}</span>
+        {!hasRealArt && (
+          <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, fontSize: size * 0.35, filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.5))' }}>{item.icon}</span>
+        )}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8, background: 'linear-gradient(0deg, rgba(0,0,0,0.55), rgba(0,0,0,0))' }}>
+          <Avatar url={avatarUrl} size={avatarSize} frame={equippedFrame ?? null} />
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            @{username || '—'}
+          </span>
+        </div>
       </div>
     )
   }
@@ -116,11 +141,16 @@ function ItemPreviewVisual({ item, size = 88, avatarUrl }: { item: ShopItem; siz
 export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
   const { profile, refreshProfile } = useAuth()
   const [category, setCategory] = useState<CategoryKey>('all')
+  // Applied filters — everything below `category` lives inside the Filter
+  // bottom sheet now, not on the always-visible main page (requirement:
+  // "Keep the main page simple. At the top show only: shop title; currency
+  // balance; horizontal cosmetic category tabs; search button; one clear
+  // Filter button.").
   const [rarity, setRarity] = useState<'all' | Rarity>('all')
   const [collection, setCollection] = useState<string>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'static' | 'animated'>('all')
+  const [ownership, setOwnership] = useState<'all' | 'owned' | 'not_owned' | 'equipped'>('all')
   const [sort, setSort] = useState<SortKey>('default')
-  const [animatedOnly, setAnimatedOnly] = useState(false)
-  const [ownedOnly, setOwnedOnly] = useState(false)
   const [items, setItems] = useState<ShopItem[]>([])
   const [loading, setLoading] = useState(true)
   const [weeklyCoins, setWeeklyCoins] = useState(0)
@@ -129,8 +159,38 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
   const [purchasing, setPurchasing] = useState(false)
   const [equipping, setEquipping] = useState(false)
   const [toast, setToast] = useState<{ msg: string; color?: string } | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+  const [search, setSearch] = useState('')
+  // Draft copies edited inside the Filter sheet — only committed to the
+  // real (applied) filter state above when the user taps "Apply filters",
+  // so browsing the sheet never re-filters the grid behind it mid-edit.
+  const [draftRarity, setDraftRarity] = useState<'all' | Rarity>('all')
+  const [draftCollection, setDraftCollection] = useState<string>('all')
+  const [draftType, setDraftType] = useState<'all' | 'static' | 'animated'>('all')
+  const [draftOwnership, setDraftOwnership] = useState<'all' | 'owned' | 'not_owned' | 'equipped'>('all')
+  const [draftSort, setDraftSort] = useState<SortKey>('default')
   const isAr = lang === 'ar'
   const myCoins = profile?.coins ?? 0
+
+  const activeFilterCount =
+    (rarity !== 'all' ? 1 : 0) + (collection !== 'all' ? 1 : 0) + (typeFilter !== 'all' ? 1 : 0) +
+    (ownership !== 'all' ? 1 : 0) + (sort !== 'default' ? 1 : 0)
+
+  const openFilters = () => {
+    setDraftRarity(rarity); setDraftCollection(collection); setDraftType(typeFilter)
+    setDraftOwnership(ownership); setDraftSort(sort)
+    setShowFilters(true)
+  }
+  const applyFilters = () => {
+    setRarity(draftRarity); setCollection(draftCollection); setTypeFilter(draftType)
+    setOwnership(draftOwnership); setSort(draftSort)
+    setShowFilters(false)
+  }
+  const resetDraftFilters = () => {
+    setDraftRarity('all'); setDraftCollection('all'); setDraftType('all')
+    setDraftOwnership('all'); setDraftSort('default')
+  }
 
   const flash = (msg: string, color?: string) => {
     setToast({ msg, color })
@@ -168,12 +228,17 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
   )
 
   const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
     const base = items.filter((i) =>
       (category === 'all' || i.type === category) &&
       (rarity === 'all' || i.rarity === rarity) &&
       (collection === 'all' || i.collection === collection) &&
-      (!animatedOnly || i.is_animated) &&
-      (!ownedOnly || i.owned)
+      (typeFilter === 'all' || (typeFilter === 'animated' ? i.is_animated : !i.is_animated)) &&
+      (ownership === 'all' ||
+        (ownership === 'owned' && i.owned) ||
+        (ownership === 'not_owned' && !i.owned) ||
+        (ownership === 'equipped' && i.equipped)) &&
+      (!q || i.label.toLowerCase().includes(q) || i.label_ar.includes(search.trim()))
     )
     const sorted = [...base]
     switch (sort) {
@@ -184,7 +249,7 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
       default: sorted.sort((a, b) => (b.is_featured ? 1 : 0) - (a.is_featured ? 1 : 0) || (a.sort_order ?? 0) - (b.sort_order ?? 0))
     }
     return sorted
-  }, [items, category, rarity, collection, animatedOnly, ownedOnly, sort])
+  }, [items, category, rarity, collection, typeFilter, ownership, sort, search])
 
   const closePreview = () => { setPreview(null); setConfirming(false) }
 
@@ -263,89 +328,61 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
           </div>
         </div>
 
-        {/* Category filter */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none' }}>
-          {CATEGORY_META.map((c) => (
-            <button
-              key={c.key}
-              onClick={() => setCategory(c.key)}
-              style={{
-                padding: '8px 14px', borderRadius: 99, border: 'none', cursor: 'pointer', flexShrink: 0,
-                fontSize: 12, fontWeight: 600, transition: 'all 0.2s ease',
-                background: category === c.key ? 'linear-gradient(135deg, #7c3aed, #4f46e5)' : 'rgba(var(--fg-rgb),0.06)',
-                color: category === c.key ? 'white' : 'rgba(var(--fg2-rgb),0.5)',
-                fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
-              }}
-            >
-              {isAr ? c.ar : c.en}
-            </button>
-          ))}
-        </div>
-
-        {/* Rarity filter */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 16, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none' }}>
-          <button
-            onClick={() => setRarity('all')}
-            style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${rarity === 'all' ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: rarity === 'all' ? 'rgba(157,111,255,0.15)' : 'transparent', color: rarity === 'all' ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.45)' }}
-          >
-            {isAr ? 'كل الندرة' : 'All rarities'}
-          </button>
-          {RARITY_ORDER.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRarity(r)}
-              style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${rarity === r ? `${RARITY_META[r].color}80` : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: rarity === r ? `${RARITY_META[r].color}20` : 'transparent', color: rarity === r ? RARITY_META[r].color : 'rgba(var(--fg2-rgb),0.45)' }}
-            >
-              {isAr ? RARITY_META[r].ar : RARITY_META[r].en}
-            </button>
-          ))}
-        </div>
-
-        {/* Collection filter — derived entirely from the data, never hardcoded */}
-        {knownCollections.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none' }}>
-            <button
-              onClick={() => setCollection('all')}
-              style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${collection === 'all' ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: collection === 'all' ? 'rgba(157,111,255,0.15)' : 'transparent', color: collection === 'all' ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.45)' }}
-            >
-              {isAr ? 'كل المجموعات' : 'All collections'}
-            </button>
-            {knownCollections.map((c) => (
+        {/* Simplified top: category tabs + search + one Filter button.
+            Rarity / Collection / Type / Ownership / Sort all live inside the
+            Filter bottom sheet now — nothing else is visible until the user
+            opens it (requirement: "Keep the main page simple"). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, scrollbarWidth: 'none', flex: 1, minWidth: 0 }}>
+            {CATEGORY_META.map((c) => (
               <button
-                key={c}
-                onClick={() => setCollection(c)}
-                style={{ padding: '5px 12px', borderRadius: 99, border: `1px solid ${collection === c ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', flexShrink: 0, fontSize: 11, fontWeight: 700, background: collection === c ? 'rgba(157,111,255,0.15)' : 'transparent', color: collection === c ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.45)' }}
+                key={c.key}
+                onClick={() => setCategory(c.key)}
+                aria-current={category === c.key}
+                style={{
+                  padding: '10px 16px', borderRadius: 99, border: 'none', cursor: 'pointer', flexShrink: 0,
+                  fontSize: 12.5, fontWeight: 600, transition: 'all 0.2s ease', minHeight: 40,
+                  background: category === c.key ? 'linear-gradient(135deg, #7c3aed, #4f46e5)' : 'rgba(var(--fg-rgb),0.06)',
+                  color: category === c.key ? 'white' : 'rgba(var(--fg2-rgb),0.5)',
+                  fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit',
+                }}
               >
-                {c}
+                {isAr ? c.ar : c.en}
               </button>
             ))}
           </div>
+          <button
+            onClick={() => setShowSearch((v) => !v)}
+            aria-label={isAr ? 'بحث' : 'Search'}
+            style={{ width: 40, height: 40, flexShrink: 0, borderRadius: 12, border: `1px solid ${showSearch ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.1)'}`, background: showSearch ? 'rgba(157,111,255,0.15)' : 'var(--surface-2)', color: showSearch ? '#9d6fff' : 'var(--foreground)', cursor: 'pointer', fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            🔍
+          </button>
+          <button
+            onClick={openFilters}
+            style={{ position: 'relative', height: 40, flexShrink: 0, padding: '0 16px', borderRadius: 12, border: `1px solid ${activeFilterCount > 0 ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.1)'}`, background: activeFilterCount > 0 ? 'rgba(157,111,255,0.15)' : 'var(--surface-2)', color: activeFilterCount > 0 ? '#9d6fff' : 'var(--foreground)', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            {isAr ? 'الفلاتر' : 'Filter'}
+            {activeFilterCount > 0 && (
+              <span style={{ minWidth: 16, height: 16, borderRadius: 99, background: '#9d6fff', color: '#fff', fontSize: 9.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px' }}>
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {showSearch && (
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={isAr ? 'ابحث عن عنصر...' : 'Search items...'}
+            style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(var(--fg-rgb),0.12)', background: 'var(--surface-2)', color: 'var(--foreground)', fontSize: 13, marginBottom: 12, fontFamily: isAr ? "'Cairo', sans-serif" : 'inherit' }}
+          />
         )}
 
-        {/* Sort + quick toggles + total count */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            style={{ padding: '6px 10px', borderRadius: 10, border: '1px solid rgba(var(--fg-rgb),0.1)', background: 'var(--surface-2)', color: 'var(--foreground)', fontSize: 11.5, fontWeight: 600 }}
-          >
-            {SORT_META.map((s) => <option key={s.key} value={s.key}>{isAr ? s.ar : s.en}</option>)}
-          </select>
-          <button
-            onClick={() => setAnimatedOnly((v) => !v)}
-            style={{ padding: '6px 12px', borderRadius: 99, border: `1px solid ${animatedOnly ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: animatedOnly ? 'rgba(157,111,255,0.15)' : 'transparent', color: animatedOnly ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}
-          >
-            ✨ {isAr ? 'متحرك فقط' : 'Animated only'}
-          </button>
-          <button
-            onClick={() => setOwnedOnly((v) => !v)}
-            style={{ padding: '6px 12px', borderRadius: 99, border: `1px solid ${ownedOnly ? 'rgba(0,230,118,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 11, fontWeight: 700, background: ownedOnly ? 'rgba(0,230,118,0.15)' : 'transparent', color: ownedOnly ? '#00e676' : 'rgba(var(--fg2-rgb),0.5)' }}
-          >
-            ✓ {isAr ? 'المملوكة فقط' : 'Owned only'}
-          </button>
-          <span style={{ marginInlineStart: 'auto', fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', fontWeight: 600 }}>
-            {isAr ? `${filtered.length} من ${items.length}` : `${filtered.length} of ${items.length}`}
-          </span>
+        <div style={{ marginBottom: 12, fontSize: 11, color: 'rgba(var(--fg2-rgb),0.4)', fontWeight: 600 }}>
+          {isAr ? `${filtered.length} من ${items.length}` : `${filtered.length} of ${items.length}`}
         </div>
 
         {filtered.length === 0 && (
@@ -408,6 +445,96 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
         </div>
       </div>
 
+      {/* Filter bottom sheet — Rarity / Collection / Type / Ownership / Sort,
+          all hidden until the user taps the Filter button. Edits here are
+          drafts; nothing re-filters the grid until "Apply filters". */}
+      {showFilters && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(3,3,15,0.88)', zIndex: 9300, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+          onClick={() => setShowFilters(false)}
+        >
+          <div
+            style={{ width: '100%', maxWidth: 480, maxHeight: '82vh', overflowY: 'auto', background: 'var(--surface-2)', borderRadius: '24px 24px 0 0', padding: '20px 20px 16px', border: '1px solid rgba(var(--fg-rgb),0.08)', animation: 'sheet-in 0.25s ease-out' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--foreground)' }}>{isAr ? 'الفلاتر' : 'Filters'}</h3>
+              <button onClick={() => setShowFilters(false)} aria-label={isAr ? 'إغلاق' : 'Close'} style={{ width: 32, height: 32, borderRadius: 99, border: 'none', background: 'rgba(var(--fg-rgb),0.08)', color: 'var(--foreground)', cursor: 'pointer', fontSize: 15 }}>✕</button>
+            </div>
+
+            <p style={{ margin: '0 0 8px', fontSize: 11.5, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.5)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isAr ? 'الندرة' : 'Rarity'}</p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+              <button onClick={() => setDraftRarity('all')} style={{ padding: '7px 14px', borderRadius: 99, border: `1px solid ${draftRarity === 'all' ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftRarity === 'all' ? 'rgba(157,111,255,0.15)' : 'transparent', color: draftRarity === 'all' ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}>
+                {isAr ? 'الكل' : 'All'}
+              </button>
+              {RARITY_ORDER.map((r) => (
+                <button key={r} onClick={() => setDraftRarity(r)} style={{ padding: '7px 14px', borderRadius: 99, border: `1px solid ${draftRarity === r ? `${RARITY_META[r].color}80` : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftRarity === r ? `${RARITY_META[r].color}20` : 'transparent', color: draftRarity === r ? RARITY_META[r].color : 'rgba(var(--fg2-rgb),0.5)' }}>
+                  {isAr ? RARITY_META[r].ar : RARITY_META[r].en}
+                </button>
+              ))}
+            </div>
+
+            {knownCollections.length > 0 && (
+              <>
+                <p style={{ margin: '0 0 8px', fontSize: 11.5, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.5)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isAr ? 'المجموعة' : 'Collection'}</p>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+                  <button onClick={() => setDraftCollection('all')} style={{ padding: '7px 14px', borderRadius: 99, border: `1px solid ${draftCollection === 'all' ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftCollection === 'all' ? 'rgba(157,111,255,0.15)' : 'transparent', color: draftCollection === 'all' ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}>
+                    {isAr ? 'الكل' : 'All'}
+                  </button>
+                  {knownCollections.map((c) => (
+                    <button key={c} onClick={() => setDraftCollection(c)} style={{ padding: '7px 14px', borderRadius: 99, border: `1px solid ${draftCollection === c ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftCollection === c ? 'rgba(157,111,255,0.15)' : 'transparent', color: draftCollection === c ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <p style={{ margin: '0 0 8px', fontSize: 11.5, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.5)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isAr ? 'النوع' : 'Type'}</p>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 18 }}>
+              {([['all', isAr ? 'الكل' : 'All'], ['static', isAr ? 'ثابت' : 'Static'], ['animated', isAr ? 'متحرك' : 'Animated']] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setDraftType(v)} style={{ flex: 1, padding: '8px 10px', borderRadius: 10, border: `1px solid ${draftType === v ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftType === v ? 'rgba(157,111,255,0.15)' : 'transparent', color: draftType === v ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <p style={{ margin: '0 0 8px', fontSize: 11.5, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.5)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isAr ? 'الملكية' : 'Ownership'}</p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+              {([['all', isAr ? 'الكل' : 'All'], ['owned', isAr ? 'مملوك' : 'Owned'], ['not_owned', isAr ? 'غير مملوك' : 'Not owned'], ['equipped', isAr ? 'مجهّز' : 'Equipped']] as const).map(([v, label]) => (
+                <button key={v} onClick={() => setDraftOwnership(v)} style={{ padding: '7px 14px', borderRadius: 99, border: `1px solid ${draftOwnership === v ? 'rgba(157,111,255,0.5)' : 'rgba(var(--fg-rgb),0.08)'}`, cursor: 'pointer', fontSize: 12, fontWeight: 700, background: draftOwnership === v ? 'rgba(157,111,255,0.15)' : 'transparent', color: draftOwnership === v ? '#9d6fff' : 'rgba(var(--fg2-rgb),0.5)' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <p style={{ margin: '0 0 8px', fontSize: 11.5, fontWeight: 700, color: 'rgba(var(--fg2-rgb),0.5)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{isAr ? 'الترتيب' : 'Sorting'}</p>
+            <select
+              value={draftSort}
+              onChange={(e) => setDraftSort(e.target.value as SortKey)}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(var(--fg-rgb),0.1)', background: 'var(--surface-1)', color: 'var(--foreground)', fontSize: 13, fontWeight: 600, marginBottom: 22 }}
+            >
+              {SORT_META.map((s) => <option key={s.key} value={s.key}>{isAr ? s.ar : s.en}</option>)}
+            </select>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={resetDraftFilters}
+                style={{ flex: 1, padding: '13px', borderRadius: 12, border: '1px solid rgba(var(--fg-rgb),0.12)', background: 'transparent', color: 'var(--foreground)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+              >
+                {isAr ? 'إعادة تعيين' : 'Reset'}
+              </button>
+              <button
+                onClick={applyFilters}
+                style={{ flex: 2, padding: '13px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 800 }}
+              >
+                {isAr ? 'تطبيق الفلاتر' : 'Apply filters'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Preview / purchase modal */}
       {preview && (() => {
         const item = preview
@@ -424,7 +551,13 @@ export default function RewardsScreen({ onNavigate, lang, setLang }: Props) {
               onClick={(e) => e.stopPropagation()}
             >
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
-                <ItemPreviewVisual item={item} size={item.type === 'banner' ? 72 : 92} avatarUrl={profile?.avatar_url} />
+                <ItemPreviewVisual
+                  item={item}
+                  size={item.type === 'banner' ? 72 : 92}
+                  avatarUrl={profile?.avatar_url}
+                  equippedFrame={items.find((i) => i.type === 'frame' && i.equipped) ?? null}
+                  username={profile?.username}
+                />
               </div>
 
               <h3 style={{ textAlign: 'center', margin: '0 0 4px', fontSize: 19, fontWeight: 800, fontFamily: "'Exo 2', sans-serif", color: 'var(--foreground)' }}>

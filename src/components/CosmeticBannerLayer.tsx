@@ -24,22 +24,30 @@ const FILL: React.CSSProperties = {
  * hidden, same as the existing custom-header-photo layer this sits next to
  * on every profile-surface screen).
  *
- * Three render paths, in priority order:
- *   1. is_animated + video_url + poster_url -> real <video> loop (the fix
- *      for "items labeled Animated were completely static" — previously
- *      style.animated was a dead JSON flag nothing ever read).
- *   2. image_url only -> static <img>.
- *   3. Neither -> the existing CSS gradient (bannerBackground), unchanged
+ * Four render paths, in priority order:
+ *   1. is_animated + media_type='animated_svg' + image_url + poster_url ->
+ *      the SVG markup is inlined directly into the DOM (not used as an
+ *      <img src>) so its embedded CSS @keyframes actually run AND so this
+ *      component can pause them the same way it pauses <video>: toggling a
+ *      wrapper class that flips `animation-play-state` off/on via
+ *      IntersectionObserver + document visibilitychange. This is a real,
+ *      visibly-moving asset — not a gradient or static SVG mislabeled as
+ *      animated.
+ *   2. is_animated + video_url + poster_url -> real <video> loop.
+ *   3. image_url only -> static <img>.
+ *   4. Neither -> the existing CSS gradient (bannerBackground), unchanged
  *      behavior for every non-animated banner already in the shop.
  *
  * If the video fails to load/decode, it falls back to poster_url (or the
  * gradient if there's no poster) instead of leaving a broken/blank area.
  *
- * Respects `prefers-reduced-motion: reduce` — when set, the video never
- * plays at all (not even a single autoplay frame) and the static poster
- * image is shown instead, same as a load failure. Tracked live via a
- * matchMedia listener so toggling the OS setting while the app is open
- * takes effect immediately, no reload required.
+ * Respects `prefers-reduced-motion: reduce` — when set, neither the video
+ * nor the animated SVG ever plays (not even a single autoplay frame) and
+ * the static poster image is shown instead. Tracked live via a matchMedia
+ * listener so toggling the OS setting while the app is open takes effect
+ * immediately, no reload required. (The animated-SVG markup also carries
+ * its own `@media (prefers-reduced-motion: reduce)` rule as a second,
+ * independent guard.)
  */
 export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props) {
   const [videoFailed, setVideoFailed] = useState(false)
@@ -48,6 +56,7 @@ export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props)
   )
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const svgWrapRef = useRef<HTMLDivElement | null>(null)
   const isIntersectingRef = useRef(true)
 
   useEffect(() => {
@@ -58,7 +67,44 @@ export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props)
     return () => mq.removeEventListener?.('change', onChange)
   }, [])
 
-  const canPlayVideo = !!(banner?.is_animated && banner.video_url && banner.poster_url && !videoFailed && !reducedMotion)
+  const canPlaySvg = !!(
+    banner?.is_animated && banner.media_type === 'animated_svg' && banner.image_url && banner.poster_url && !reducedMotion
+  )
+  const canPlayVideo = !!(
+    !canPlaySvg && banner?.is_animated && banner.media_type === 'video' && banner.video_url && banner.poster_url && !videoFailed && !reducedMotion
+  )
+
+  // Pause/resume the inline animated SVG the same way the video below is
+  // paused: off-screen (IntersectionObserver) and app-backgrounded
+  // (visibilitychange). The SVG's own CSS listens for the
+  // `.kastro-anim-paused` class on this wrapper (see the markup generated
+  // for banner_bahrain_waving) and sets `animation-play-state: paused`.
+  useEffect(() => {
+    if (!canPlaySvg) return
+    const el = svgWrapRef.current
+    if (!el) return
+
+    const setPaused = (paused: boolean) => el.classList.toggle('kastro-anim-paused', paused)
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        isIntersectingRef.current = entry.isIntersecting
+        setPaused(!entry.isIntersecting || document.visibilityState !== 'visible')
+      },
+      { threshold: 0.1 },
+    )
+    observer.observe(el)
+
+    const onVisibility = () => {
+      setPaused(document.visibilityState !== 'visible' || !isIntersectingRef.current)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [canPlaySvg, banner?.image_url])
 
   // Reset the failure flag whenever the equipped banner changes (e.g. the
   // player equips a different animated item) so a previous failure doesn't
@@ -105,6 +151,21 @@ export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props)
     }
   }, [canPlayVideo, banner?.video_url])
 
+  if (canPlaySvg) {
+    return (
+      <div
+        ref={svgWrapRef}
+        style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
+        // The markup here is authored entirely by us (seeded via migration
+        // into cosmetic_items.image_url for media_type='animated_svg' rows
+        // — never user-submitted), which is why inlining it is safe. It has
+        // to be inlined rather than used as <img src> so its embedded CSS
+        // @keyframes actually run and can be paused via the class above.
+        dangerouslySetInnerHTML={{ __html: banner!.image_url! }}
+      />
+    )
+  }
+
   if (canPlayVideo) {
     return (
       <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }}>
@@ -127,7 +188,15 @@ export default function CosmeticBannerLayer({ banner, fallbackGradient }: Props)
     )
   }
 
-  const imageUrl = banner?.image_url || (banner?.is_animated ? banner?.poster_url : null)
+  // For 'animated_svg' items, `image_url` holds raw <svg> markup (not a
+  // loadable URL) — it's only valid via the inline dangerouslySetInnerHTML
+  // path above. If that path isn't active (reduced motion, or the item
+  // failed the canPlaySvg checks), fall back to the real static poster
+  // image instead of trying to point an <img> at raw markup text.
+  const imageUrl =
+    banner?.media_type === 'animated_svg'
+      ? banner?.poster_url ?? null
+      : banner?.image_url || (banner?.is_animated ? banner?.poster_url : null)
   if (imageUrl) {
     return <img src={imageUrl} alt="" style={FILL} onError={(e) => { e.currentTarget.style.display = 'none' }} />
   }

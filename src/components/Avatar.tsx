@@ -3,16 +3,6 @@ import { BUILTIN_AVATARS, type CosmeticItem } from '../lib/api'
 
 const DEFAULT_GRADIENT = 'linear-gradient(135deg, #7c3aed, #00d4ff)'
 
-/** How far a frame's decorative artwork is allowed to extend past the
- * circular avatar photo, as a fraction of `size`. Real collectible frames
- * (rings, laurels, gem clusters) are designed to sit slightly outside the
- * photo edge rather than being cropped to it — but this stays purely
- * visual: the overlay is `position: absolute` inside a `position: relative`
- * wrapper, so it never grows Avatar's contribution to surrounding flex/grid
- * layout (every existing call site keeps its exact `size x size` footprint
- * whether or not a frame is equipped). */
-const FRAME_OVERHANG = 0.16
-
 function PersonSilhouette({ size }: { size: number }) {
   return (
     <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -28,38 +18,58 @@ interface AvatarProps {
   size: number
   alt?: string
   className?: string
-  /** Applied to the inner circular photo/gradient layer — same as before
-   * `frame` existed. Still how the legacy CSS-ring frame look (border +
-   * glow, via cosmetics.ts's frameAvatarStyle()) is applied for any
-   * cosmetic that has no real overlay artwork yet. */
+  /** Applied to the inner circular photo/gradient layer. When `frame` has
+   * real overlay artwork (`image_url`), any `border`/`boxShadow` in this
+   * style is stripped before use — see the note above `frameHasOverlay`
+   * below for why. For legacy ring-only frames (no `image_url`) this is
+   * still how the CSS-ring look (border + glow, from cosmetics.ts's
+   * frameAvatarStyle()) gets applied, unchanged from before. */
   style?: CSSProperties
-  /** The equipped avatar-frame cosmetic (or null/undefined for none). When
-   * it has real overlay artwork (`image_url` — a raster/SVG/PNG frame asset
-   * with a transparent center), Avatar renders it as a proper layered
-   * frame: avatar photo/gradient underneath, frame art on top, extending
-   * slightly past the photo edge like a real collectible frame — not a
-   * flat border color. Purely additive: omit this prop (or equip a legacy
-   * ring-only frame with no `image_url`) and rendering is byte-identical
-   * to before this prop existed. */
+  /** The equipped avatar-frame cosmetic (or null/undefined for none). */
   frame?: CosmeticItem | null
+  /** Layer 4 (optional animation/effect) and layer 5 (online indicator /
+   * edit button), per the shared avatar-frame component's mandated 5-layer
+   * order: 1) avatar background 2) avatar image 3) frame overlay 4) effect
+   * 5) indicator. Rendered inside the same sized/positioned box as the
+   * frame overlay so callers never need their own absolute-positioning math
+   * on top of Avatar. */
+  effect?: ReactNode
+  indicator?: ReactNode
 }
 
 /**
  * Renders a user's avatar consistently everywhere it appears (Profile,
- * Home, Leaderboard, Friends, Tournament, Admin). Three photo/gradient
- * states:
+ * Home, Leaderboard, Friends, Tournament, Admin, shop preview). This is the
+ * one shared, reusable avatar-frame component — every screen that shows an
+ * avatar with a possible frame must render through this component rather
+ * than hand-rolling its own overlay/positioning.
+ *
+ * Photo/gradient states (layers 1–2):
  *  - real Storage URL → circular <img>, cover-cropped
  *  - "builtin:<id>" → the matching gradient preset with a person icon
- *  - null/unrecognized → the original generic gradient placeholder, so
- *    every screen that never had avatars before still looks the same.
+ *  - null/unrecognized → the original generic gradient placeholder
  *
- * Layered on top, in order (per the cosmetics-expansion frame-rendering
- * spec): 1) avatar background/gradient, 2) avatar image, 3) frame overlay
- * artwork (this component's `frame` prop), 4)/5) effect + status-dot layers
- * are left to callers (e.g. LeaderboardScreen already renders its own
- * online-dot after Avatar) since those vary per screen.
+ * Frame overlay (layer 3): when `frame.image_url` is set, it's rendered as
+ * an absolutely-positioned image using exactly `position: absolute; inset:
+ * 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none`
+ * over the *same* `size x size` box as the avatar — same center point, same
+ * square container, 1:1 aspect ratio, no per-frame margins/transforms, no
+ * overhang past the box. Frame art must be authored to the photo's edge,
+ * not beyond it.
+ *
+ * Critical: when a real overlay image is used, any legacy `border`/
+ * `boxShadow` passed via `style` is intentionally dropped from the inner
+ * photo layer. Applying both at once was the root cause of misaligned/
+ * "sticker" frames — an opaque CSS border (e.g. `3px solid var(--surface-1)`)
+ * shrinks the *visible photo circle* by 2×borderWidth (global `box-sizing:
+ * border-box`), while frame artwork is authored assuming the photo fills
+ * the full box — producing a visible seam/gap between photo and frame. The
+ * two rendering paths (legacy CSS ring vs. image overlay) are mutually
+ * exclusive by construction here so callers can't reintroduce this bug.
  */
-export default function Avatar({ url, size, alt = '', className, style, frame }: AvatarProps) {
+export default function Avatar({ url, size, alt = '', className, style, frame, effect, indicator }: AvatarProps) {
+  const frameOverlayUrl = frame?.image_url || null
+
   const inner: CSSProperties = {
     width: size,
     height: size,
@@ -70,6 +80,14 @@ export default function Avatar({ url, size, alt = '', className, style, frame }:
     flexShrink: 0,
     overflow: 'hidden',
     ...style,
+  }
+
+  // Real frame artwork present: strip any conflicting ring styling so the
+  // photo renders at full size with nothing but the frame overlay drawing
+  // the ring on top of it.
+  if (frameOverlayUrl) {
+    inner.border = 'none'
+    inner.boxShadow = 'none'
   }
 
   const isRealPhoto = !!(url && !url.startsWith('builtin:') && (url.startsWith('http://') || url.startsWith('https://')))
@@ -92,40 +110,50 @@ export default function Avatar({ url, size, alt = '', className, style, frame }:
     photo = <PersonSilhouette size={size} />
   }
 
-  const frameOverlayUrl = frame?.image_url || null
-
-  // No frame artwork: render exactly as before this prop existed (the
-  // caller's own `style` — e.g. the legacy CSS ring from frameAvatarStyle()
-  // — is already applied to `inner` above via spread).
-  if (!frameOverlayUrl) {
+  // No frame artwork and no extra layers: render exactly as before this
+  // prop existed (the caller's own `style` — e.g. the legacy CSS ring from
+  // frameAvatarStyle() — is already applied to `inner` above via spread).
+  if (!frameOverlayUrl && !effect && !indicator) {
     return <div className={className} style={inner}>{photo}</div>
   }
 
-  // Real frame artwork: outer wrapper stays exactly `size x size` for
-  // layout purposes (so nothing shifts in surrounding flex/grid rows
-  // whether or not a frame is equipped) — the overlay image is absolutely
-  // positioned and allowed to visually extend past that box without
-  // affecting layout, the same "grow visually, not in flow" technique used
-  // for expanded tap targets elsewhere in the app.
-  const overhang = Math.round(size * FRAME_OVERHANG)
   return (
-    <div className={className} style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+    <div
+      className={className}
+      style={{ position: 'relative', width: size, height: size, aspectRatio: '1 / 1', flexShrink: 0 }}
+    >
+      {/* Layer 1+2: avatar background + image */}
       <div style={inner}>{photo}</div>
-      <img
-        src={frameOverlayUrl}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
-        style={{
-          position: 'absolute',
-          top: -overhang, left: -overhang, right: -overhang, bottom: -overhang,
-          width: size + overhang * 2, height: size + overhang * 2,
-          objectFit: 'contain',
-          pointerEvents: 'none',
-          zIndex: 2,
-        }}
-        onError={(e) => { e.currentTarget.style.display = 'none' }}
-      />
+
+      {/* Layer 3: frame overlay — same box as the avatar, no overhang, no per-frame margins/transforms */}
+      {frameOverlayUrl && (
+        <img
+          src={frameOverlayUrl}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            pointerEvents: 'none',
+            zIndex: 2,
+          }}
+          onError={(e) => { e.currentTarget.style.display = 'none' }}
+        />
+      )}
+
+      {/* Layer 4: optional animation/effect */}
+      {effect && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3 }}>{effect}</div>
+      )}
+
+      {/* Layer 5: online indicator / edit button — callers position within this box as needed */}
+      {indicator && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 4 }}>{indicator}</div>
+      )}
     </div>
   )
 }
