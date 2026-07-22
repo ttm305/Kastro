@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "npm run validate:frames && tsc -b && vite build",
     "validate:frames": "node --experimental-strip-types scripts/validate-frames.ts",
+    "validate:frames:pixels": "python3 scripts/validate-frames-pixels.py",
     "preview": "vite preview",
     "format": "oxfmt",
     "test": "vitest run",
