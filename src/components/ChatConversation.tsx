@@ -17,6 +17,9 @@ import {
   getConversationDisappearingMode,
   setConversationDisappearingMode,
   validateChatMedia,
+  normalizeMediaMime,
+  chatMediaExtension,
+  CHAT_MEDIA_MAX_BYTES,
   buildChatMediaPath,
   uploadChatMedia,
   sendMediaMessage,
@@ -24,6 +27,7 @@ import {
   type ChatMessage,
   type DisappearingMode,
   type ChatAttachmentType,
+  type ChatMediaValidationError,
 } from '../lib/api'
 import { activeConversation, setActiveConversation } from '../lib/chatPresence'
 import { formatPresence } from '../lib/presenceFormat'
@@ -575,18 +579,49 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
     }
   }
 
+  // Translates validateChatMedia's error *code* into a friendly, localized
+  // string — never the raw mime type. This was the actual bug report: a
+  // real recording (audio/webm;codecs=opus) was being rejected by an
+  // over-strict string comparison and the raw mime was leaking straight
+  // into the UI. See normalizeMediaMime's doc comment in api.ts for the
+  // underlying fix; this is just the presentation layer for whatever
+  // validation still legitimately fails (wrong file type entirely, empty
+  // file, oversized file).
+  function mediaErrorMessage(code: ChatMediaValidationError, type: ChatAttachmentType): string {
+    if (code === 'unsupported_type') {
+      if (type === 'voice') return isAr ? 'تعذّر إرسال الرسالة الصوتية — صيغة التسجيل غير مدعومة على هذا الجهاز.' : 'Couldn’t send the voice message — this device recorded it in an unsupported format.'
+      if (type === 'video') return isAr ? 'صيغة الفيديو غير مدعومة.' : 'This video format isn’t supported.'
+      return isAr ? 'صيغة الصورة غير مدعومة.' : 'This image format isn’t supported.'
+    }
+    if (code === 'empty') return isAr ? 'الملف فارغ.' : 'That file is empty.'
+    const maxMb = Math.round(CHAT_MEDIA_MAX_BYTES[type] / (1024 * 1024))
+    return isAr ? `الملف كبير جدًا (الحد الأقصى ${maxMb} ميغابايت).` : `That file is too large (max ${maxMb}MB).`
+  }
+
   // --- Media attachment send pipeline (image/video/voice) ---
   // Mirrors handleSend's exact contract (optimistic append → real RPC →
   // reconcile id, remove-on-failure, never a fake success) but layers real
   // upload progress/cancel/retry on top, since a media send has an extra
   // step (the storage upload) that plain text never needed.
-  async function sendMediaAttachment(args: { blob: Blob; type: ChatAttachmentType; mime: string; ext: string; durationSeconds?: number; width?: number; height?: number }) {
-    const sizeErr = validateChatMedia(args.type, args.mime, args.blob.size)
-    if (sizeErr) { setSendError(sizeErr); return }
+  async function sendMediaAttachment(args: { blob: Blob; type: ChatAttachmentType; mime: string; durationSeconds?: number; width?: number; height?: number }) {
+    const validationError = validateChatMedia(args.type, args.mime, args.blob.size)
+    if (validationError) { setSendError(mediaErrorMessage(validationError, args.type)); return }
+
+    // Normalize + re-wrap the Blob with the canonical mime *before* it ever
+    // touches the network. MediaRecorder blobs in particular report things
+    // like "audio/webm;codecs=opus" — normalizing only for our own
+    // validation but then uploading the original Blob would just move the
+    // same mismatch to the Storage bucket's own allowlist check instead of
+    // fixing it. This way the actual Content-Type Storage sees, the mime
+    // recorded on the message row, and the extension are always the same
+    // clean value everywhere.
+    const normalizedMime = normalizeMediaMime(args.mime)
+    const blob = args.blob.type === normalizedMime ? args.blob : new Blob([args.blob], { type: normalizedMime })
+    const ext = chatMediaExtension(args.type, normalizedMime)
 
     const clientMessageId = safeRandomUUID()
     const pendingId = `pending-${clientMessageId}`
-    const localUrl = URL.createObjectURL(args.blob)
+    const localUrl = URL.createObjectURL(blob)
     localMediaUrlsRef.current.set(pendingId, localUrl)
 
     const optimistic: ChatMessage = {
@@ -605,8 +640,8 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
       message_type: args.type,
       media_path: null,
       media_thumb_path: null,
-      media_mime: args.mime,
-      media_size_bytes: args.blob.size,
+      media_mime: normalizedMime,
+      media_size_bytes: blob.size,
       media_duration_seconds: args.durationSeconds ?? null,
       media_width: args.width ?? null,
       media_height: args.height ?? null,
@@ -614,11 +649,11 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
     setMessages((prev) => [...prev, optimistic])
     scrollToBottom()
 
-    const path = buildChatMediaPath(conversationId, myId, args.ext)
+    const path = buildChatMediaPath(conversationId, myId, ext)
 
     const run = () => {
       setUploads((prev) => new Map(prev).set(pendingId, { status: 'uploading', progress: 0, cancel: () => {} }))
-      const { promise, cancel } = uploadChatMedia(path, args.blob, (fraction) => {
+      const { promise, cancel } = uploadChatMedia(path, blob, (fraction) => {
         setUploads((prev) => {
           const cur = prev.get(pendingId)
           if (!cur) return prev
@@ -651,8 +686,8 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
           conversationId,
           messageType: args.type,
           mediaPath: path,
-          mediaMime: args.mime,
-          mediaSizeBytes: args.blob.size,
+          mediaMime: normalizedMime,
+          mediaSizeBytes: blob.size,
           clientMessageId,
           durationSeconds: args.durationSeconds,
           width: args.width,
@@ -685,16 +720,18 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
     const isVideo = file.type.startsWith('video/')
     if (!isImage && !isVideo) { setSendError(isAr ? 'نوع ملف غير مدعوم.' : 'Unsupported file type.'); return }
     const type: ChatAttachmentType = isImage ? 'image' : 'video'
-    const err = validateChatMedia(type, file.type, file.size)
-    if (err) { setSendError(err); return }
-    const ext = (file.name.split('.').pop() || (isImage ? 'jpg' : 'mp4')).toLowerCase()
+    // sendMediaAttachment re-validates + normalizes internally too, but
+    // checking here first avoids reading image/video metadata for a file
+    // that's going to be rejected anyway.
+    const validationError = validateChatMedia(type, file.type, file.size)
+    if (validationError) { setSendError(mediaErrorMessage(validationError, type)); return }
 
     if (isImage) {
       const dims = await getImageDimensions(file)
-      await sendMediaAttachment({ blob: file, type: 'image', mime: file.type, ext, width: dims?.width, height: dims?.height })
+      await sendMediaAttachment({ blob: file, type: 'image', mime: file.type, width: dims?.width, height: dims?.height })
     } else {
       const meta = await getVideoMeta(file)
-      await sendMediaAttachment({ blob: file, type: 'video', mime: file.type, ext, width: meta?.width, height: meta?.height, durationSeconds: meta?.duration })
+      await sendMediaAttachment({ blob: file, type: 'video', mime: file.type, width: meta?.width, height: meta?.height, durationSeconds: meta?.duration })
     }
   }
 
@@ -797,8 +834,10 @@ export default function ChatConversation({ conversationId, otherUser, lang, vari
       }
     } catch { /* duration is best-effort; upload still proceeds without it and VoiceBubble will decode it again for playback */ }
 
-    const ext = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : mime.includes('mpeg') ? 'mp3' : 'webm'
-    await sendMediaAttachment({ blob, type: 'voice', mime, ext, durationSeconds })
+    // Extension is derived from the normalized mime inside
+    // sendMediaAttachment now — MediaRecorder's raw mimeType (e.g.
+    // "audio/webm;codecs=opus") is passed through as-is here.
+    await sendMediaAttachment({ blob, type: 'voice', mime, durationSeconds })
   }
 
   // Long-press (mobile) or click-and-hold (desktop) on a real (non-pending)

@@ -1041,22 +1041,79 @@ export async function getDraft(conversationId: string, userId: string): Promise<
 // ---------------------------------------------------------------------------
 export type ChatAttachmentType = 'image' | 'video' | 'voice'
 
-const MEDIA_MAX_BYTES: Record<ChatAttachmentType, number> = {
+export const CHAT_MEDIA_MAX_BYTES: Record<ChatAttachmentType, number> = {
   image: 8 * 1024 * 1024,
   video: 50 * 1024 * 1024,
   voice: 10 * 1024 * 1024,
 }
+
+// Canonical (post-normalization) mime types only — the client always
+// normalizes before validating/uploading (see normalizeMediaMime), and the
+// send_media_message RPC + the chat-media bucket's own allowed_mime_types
+// both independently re-check against this exact same set server-side, so
+// all three layers agree. Do not add codec-suffixed variants here; add them
+// to normalizeMediaMime's stripping logic instead so every layer benefits.
 const MEDIA_ALLOWED_MIME: Record<ChatAttachmentType, string[]> = {
   image: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   video: ['video/mp4', 'video/webm', 'video/quicktime'],
-  voice: ['audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/ogg'],
+  voice: ['audio/webm', 'audio/mp4', 'audio/m4a', 'audio/aac', 'audio/mpeg', 'audio/ogg'],
 }
 
-/** Client-side pre-flight validation — a real defense-in-depth layer alongside the bucket's own size/mime allowlist and the send_media_message RPC's server-side checks, not a replacement for either; it just gives an instant, specific error before spending any upload bandwidth. */
-export function validateChatMedia(type: ChatAttachmentType, mime: string, sizeBytes: number): string | null {
-  if (!MEDIA_ALLOWED_MIME[type].includes(mime)) return `Unsupported file type: ${mime}`
-  if (sizeBytes <= 0) return 'File is empty'
-  if (sizeBytes > MEDIA_MAX_BYTES[type]) return `File is too large (max ${Math.round(MEDIA_MAX_BYTES[type] / (1024 * 1024))}MB)`
+/**
+ * Real-world MediaRecorder output is never as clean as `audio/webm` —
+ * Chrome/Android report `audio/webm;codecs=opus`, some browsers report it
+ * with a space (`audio/webm; codecs=opus`), and mixed casing shows up too.
+ * A plain `===`/`.includes()` check against a fixed list rejects all of
+ * these, which was the actual root cause of "Unsupported file type:
+ * audio/webm; codecs=opus" on mobile — the recording itself was fine, only
+ * the string comparison was too strict.
+ *
+ * This strips everything from the first `;` onward (codec/profile
+ * parameters), trims whitespace, lowercases, and folds a couple of known
+ * device aliases onto their canonical form — used identically by
+ * validateChatMedia, the actual upload (the Blob is re-wrapped with this
+ * normalized type before it's sent, so the real Content-Type Storage sees
+ * always matches the bucket's plain allowlist too), and mirrored in SQL
+ * inside send_media_message so the server never trusts the client's word
+ * for it.
+ */
+export function normalizeMediaMime(raw: string): string {
+  const base = (raw || '').split(';')[0].trim().toLowerCase()
+  if (base === 'audio/x-m4a' || base === 'audio/mp4a-latm') return 'audio/m4a'
+  return base
+}
+
+/** File extension derived from the normalized mime — never trust the original filename/mime string directly, since "audio/webm;codecs=opus" or an unexpected alias could otherwise produce a nonsensical or unsafe extension. Falls back to a sane per-type default if the normalized mime isn't one we recognize. */
+export function chatMediaExtension(type: ChatAttachmentType, mime: string): string {
+  const normalized = normalizeMediaMime(mime)
+  const byMime: Record<string, string> = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+    'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg',
+  }
+  return byMime[normalized] ?? (type === 'image' ? 'jpg' : type === 'video' ? 'mp4' : 'webm')
+}
+
+export type ChatMediaValidationError = 'unsupported_type' | 'empty' | 'too_large'
+
+/**
+ * Client-side pre-flight validation — a real defense-in-depth layer
+ * alongside the bucket's own size/mime allowlist and the
+ * send_media_message RPC's server-side checks, not a replacement for
+ * either; it just gives an instant, specific error before spending any
+ * upload bandwidth.
+ *
+ * Returns an error *code*, not a message — this file has no access to the
+ * app's EN/AR language state (that lives in the component), and showing the
+ * raw mime string straight to the user is neither friendly nor
+ * translatable. Callers map the code to a localized, non-technical string
+ * (see ChatConversation.tsx's mediaErrorMessage).
+ */
+export function validateChatMedia(type: ChatAttachmentType, mime: string, sizeBytes: number): ChatMediaValidationError | null {
+  const normalized = normalizeMediaMime(mime)
+  if (!MEDIA_ALLOWED_MIME[type].includes(normalized)) return 'unsupported_type'
+  if (sizeBytes <= 0) return 'empty'
+  if (sizeBytes > CHAT_MEDIA_MAX_BYTES[type]) return 'too_large'
   return null
 }
 
