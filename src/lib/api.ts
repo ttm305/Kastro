@@ -806,10 +806,13 @@ export async function getBlockStatus(otherUserId: string, myUserId: string) {
   }
 }
 
-export async function reportUser(reportedUserId: string, conversationId: string | null, reason: string) {
-  const { error } = await supabase.rpc('report_user', { p_reported_user_id: reportedUserId, p_conversation_id: conversationId, p_reason: reason })
+/** p_category is a new, optional, trailing RPC arg — existing 3-arg callers (FriendProfileSheet's quick report) are unaffected; the new Gaming Action Sheet report flow passes a real category. */
+export async function reportUser(reportedUserId: string, conversationId: string | null, reason: string, category?: ReportCategory) {
+  const { error } = await supabase.rpc('report_user', { p_reported_user_id: reportedUserId, p_conversation_id: conversationId, p_reason: reason, p_category: category ?? null })
   return { error: error?.message ?? null }
 }
+
+export type ReportCategory = 'harassment' | 'hate_speech' | 'spam' | 'inappropriate_content' | 'cheating' | 'impersonation' | 'other'
 
 // ---------------------------------------------------------------------------
 // Presence — is_online/last_seen_at are heartbeat-maintained (touchPresence,
@@ -817,8 +820,28 @@ export async function reportUser(reportedUserId: string, conversationId: string 
 // persisted, it's derived client-side from idle time + a Realtime Presence
 // channel. is_in_game is server-derived from live room membership, so it
 // can't be spoofed by a client claiming a status it isn't in.
+//
+// spectate_room_id/spectate_game_slug and lobby_room_id/lobby_game_slug/
+// lobby_open are additive — is_in_game/game_name/game_name_ar are computed
+// exactly as before, so every existing consumer of this type is unaffected.
+// The new fields only ever populate for board-game rooms (the only rooms
+// that support spectating and mid-flow joining today — see get_presence's
+// migration comment); quiz/trivia rooms correctly leave them null, and the
+// Gaming Action Sheet only ever offers Join Game/Spectate when they're set.
 // ---------------------------------------------------------------------------
-export type FriendPresence = { id: string; is_online: boolean; last_seen_at: string | null; is_in_game: boolean; game_name: string | null; game_name_ar: string | null }
+export type FriendPresence = {
+  id: string
+  is_online: boolean
+  last_seen_at: string | null
+  is_in_game: boolean
+  game_name: string | null
+  game_name_ar: string | null
+  spectate_room_id: string | null
+  spectate_game_slug: string | null
+  lobby_room_id: string | null
+  lobby_game_slug: string | null
+  lobby_open: boolean | null
+}
 
 export async function touchPresence() {
   await supabase.rpc('touch_presence')
@@ -833,6 +856,38 @@ export async function getPresence(userIds: string[]): Promise<FriendPresence[]> 
   const { data, error } = await supabase.rpc('get_presence', { p_ids: userIds })
   if (error) { logErr('getPresence', error); return [] }
   return (data as FriendPresence[] | null) ?? []
+}
+
+// ---------------------------------------------------------------------------
+// Friend prefs — per-viewer pin/mute state (src/lib/api.ts's friend_prefs
+// table). RLS + the RPCs both independently pin every write to auth.uid(),
+// so a caller can only ever change their own pin/mute of a friend, never the
+// friend's view of them.
+// ---------------------------------------------------------------------------
+export type FriendPrefs = { friend_id: string; pinned: boolean; muted: boolean }
+
+export async function getFriendPrefs(friendIds: string[]): Promise<Map<string, FriendPrefs>> {
+  if (!friendIds.length) return new Map()
+  const { data, error } = await supabase.rpc('get_friend_prefs', { p_friend_ids: friendIds })
+  if (error) { logErr('getFriendPrefs', error); return new Map() }
+  return new Map((data as FriendPrefs[] | null ?? []).map((p) => [p.friend_id, p]))
+}
+
+export async function setFriendPinned(friendId: string, pinned: boolean) {
+  const { error } = await supabase.rpc('set_friend_pinned', { p_friend_id: friendId, p_pinned: pinned })
+  return { error: error?.message ?? null }
+}
+
+export async function setFriendMuted(friendId: string, muted: boolean) {
+  const { error } = await supabase.rpc('set_friend_muted', { p_friend_id: friendId, p_muted: muted })
+  return { error: error?.message ?? null }
+}
+
+/** Mirrors get_leaderboard_v2's own weekly ranking exactly — same "Rank" concept as the Leaderboard screen, just narrowed server-side to one user. Returns null if the user has no rank yet (e.g. inactive account). */
+export async function getUserRank(userId: string, period: 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'alltime' = 'weekly'): Promise<number | null> {
+  const { data, error } = await supabase.rpc('get_user_rank', { p_user_id: userId, p_period: period })
+  if (error) { logErr('getUserRank', error); return null }
+  return (data as number | null) ?? null
 }
 
 // ---------------------------------------------------------------------------

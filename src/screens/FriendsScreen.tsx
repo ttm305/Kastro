@@ -28,6 +28,7 @@ import {
   type ChatMessage,
 } from '../lib/api'
 import FriendProfileSheet from '../components/FriendProfileSheet'
+import FriendGamingActionSheet from '../components/FriendGamingActionSheet'
 import { formatPresence } from '../lib/presenceFormat'
 
 interface Props {
@@ -40,6 +41,8 @@ interface Props {
   /** Set by App.tsx when a chat toast (or any other cross-screen entry point) is tapped — opens that exact conversation as soon as this screen mounts. */
   pendingOpenChat?: { conversationId: string; otherUser: { id: string; username: string; avatar_url?: string | null } } | null
   onPendingOpenChatConsumed?: () => void
+  /** Wired through to the Friends Gaming Action Sheet's Join Game/Spectate actions — see App.tsx's openLudoTarget. */
+  onOpenLudoTarget?: (mode: 'join' | 'spectate', roomId: string) => void
 }
 
 type FriendsTab = 'chats' | 'friends' | 'requests' | 'discover'
@@ -62,7 +65,7 @@ function timeAgo(iso: string, isAr: boolean): string {
   return isAr ? `منذ ${days} ي` : `${days}d ago`
 }
 
-export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendingOpenChatConsumed }: Props) {
+export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendingOpenChatConsumed, onOpenLudoTarget }: Props) {
   const { profile } = useAuth()
   const isAr = lang === 'ar'
   const myId = profile?.id ?? ''
@@ -80,6 +83,7 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
   const [chatSearch, setChatSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [viewingId, setViewingId] = useState<string | null>(null)
+  const [actionSheetTarget, setActionSheetTarget] = useState<{ friendId: string; relationship: 'friend' | 'incoming_request' | 'sent_request'; requestId?: string } | null>(null)
 
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [conversationProfiles, setConversationProfiles] = useState<Map<string, PublicProfile>>(new Map())
@@ -581,8 +585,9 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
                       💬
                     </button>
                     <button
-                      onClick={() => setViewingId(f.id)}
-                      title={isAr ? 'المزيد' : 'More'}
+                      onClick={() => setActionSheetTarget({ friendId: f.id, relationship: 'friend' })}
+                      title={isAr ? 'الإجراءات' : 'Actions'}
+                      aria-label={isAr ? 'فتح إجراءات الصديق' : 'Open friend actions'}
                       style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(var(--fg-rgb),0.06)', border: '1px solid rgba(var(--fg-rgb),0.1)', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}
                     >
                       ⋯
@@ -713,6 +718,19 @@ export default function FriendsScreen({ lang, setLang, pendingOpenChat, onPendin
           onMessage={(u) => { setViewingId(null); handleOpenChatWith(u) }}
           onRemove={(id) => { setViewingId(null); handleRemove(id) }}
           onBlock={(id) => { setViewingId(null); handleBlock(id) }}
+        />
+      )}
+
+      {actionSheetTarget && (
+        <FriendGamingActionSheet
+          lang={lang}
+          friendId={actionSheetTarget.friendId}
+          relationship={actionSheetTarget.relationship}
+          requestId={actionSheetTarget.requestId}
+          onClose={() => setActionSheetTarget(null)}
+          onMessage={(u) => { setActionSheetTarget(null); handleOpenChatWith(u) }}
+          onOpenLudoTarget={(mode, roomId) => { setActionSheetTarget(null); onOpenLudoTarget?.(mode, roomId) }}
+          onChanged={() => { if (profile?.id) refreshFriendsAndRequests(profile.id) }}
         />
       )}
 

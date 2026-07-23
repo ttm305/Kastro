@@ -15,7 +15,7 @@ import {
 } from '../lib/boardgames/ludo/geometry'
 import {
   createBoardGameRoom, joinBoardGameRoomByCode, quickMatchBoardGame, joinBoardGameSpectator,
-  leaveBoardGameSpectator, leaveBoardGameRoom, getSpectatableBoardGameRooms, type BoardGameRoom,
+  leaveBoardGameSpectator, leaveBoardGameRoom, getSpectatableBoardGameRooms, joinBoardGameRoom, type BoardGameRoom,
   getMyBoardGameHistory, getBoardGameMatchDetail, type BoardGameHistoryEntry, type BoardGameMatchDetail,
   submitLudoMove, finalizeLudoMatch, checkLudoTimeout, getActiveLudoMatch, forfeitLudoMatch, type ActiveLudoMatch,
 } from '../lib/api'
@@ -25,6 +25,14 @@ import { safeTop, safeLeft, safeRight } from '../lib/safeArea'
 interface Props {
   onNavigate: (s: Screen) => void
   lang: Lang
+  /** Set by the Friends Gaming Action Sheet's Join Game/Spectate actions —
+   * consumed once on mount to jump straight into a specific friend's room,
+   * exactly the same join_board_game_room()/join_board_game_spectator() +
+   * phase transition the Online Menu's own "Join by Code"/"Watch" buttons
+   * already perform (see LudoOnlineMenu below). Never touched otherwise, so
+   * normal setup/local-play/online-menu navigation is unaffected. */
+  autoTarget?: { mode: 'join' | 'spectate'; roomId: string } | null
+  onAutoTargetConsumed?: () => void
 }
 
 type SeatConfig = { kind: 'human' | 'ai'; difficulty: AIDifficulty }
@@ -49,7 +57,7 @@ type Phase = 'setup' | 'play' | 'online-menu' | 'online-lobby' | 'online-play' |
  * distinct game skin — every future board game gets its own version of
  * this file's "identity" half, never a copy of Ludo's.
  */
-export default function LudoScreen({ onNavigate, lang }: Props) {
+export default function LudoScreen({ onNavigate, lang, autoTarget, onAutoTargetConsumed }: Props) {
   const { profile } = useAuth()
   const isAr = lang === 'ar'
   const labels = isAr ? SEAT_LABELS_AR : SEAT_LABELS_EN
@@ -90,6 +98,40 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
     setOnlineRoomId(activeMatch.room_id)
     setPhase('online-play')
   }
+
+  // Consume an external Join Game/Spectate target exactly once, on landing
+  // here fresh from the Friends Gaming Action Sheet. Fires from 'setup' only
+  // (the screen's true entry phase) so it can never re-trigger mid-match if
+  // this component re-renders for an unrelated reason. Mirrors
+  // LudoOnlineMenu's own handleJoinCode/handleWatch bodies exactly — same
+  // RPCs, same phase transitions — just triggered by a prop instead of a
+  // text field, so a failed join/spectate (room filled up, match already
+  // started) surfaces as the same online-menu error state a manual attempt
+  // would.
+  const [autoTargetError, setAutoTargetError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!autoTarget || phase !== 'setup') return
+    let cancelled = false
+    ;(async () => {
+      primeSound()
+      if (autoTarget.mode === 'spectate') {
+        const { error: err } = await joinBoardGameSpectator(autoTarget.roomId)
+        if (cancelled) return
+        if (err) { setAutoTargetError(err); setPhase('online-menu'); onAutoTargetConsumed?.(); return }
+        setSpectateRoomId(autoTarget.roomId)
+        setPhase('online-spectate')
+      } else {
+        const { error: err } = await joinBoardGameRoom(autoTarget.roomId)
+        if (cancelled) return
+        if (err) { setAutoTargetError(err); setPhase('online-menu'); onAutoTargetConsumed?.(); return }
+        setOnlineRoomId(autoTarget.roomId)
+        setPhase('online-lobby')
+      }
+      onAutoTargetConsumed?.()
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTarget, phase])
 
   const seats: BoardGameSeat[] = useMemo(() => {
     return Array.from({ length: numPlayers }, (_, i) => {
@@ -248,6 +290,8 @@ export default function LudoScreen({ onNavigate, lang }: Props) {
           isAr={isAr}
           onEnterLobby={(roomId) => { primeSound(); setOnlineRoomId(roomId); setPhase('online-lobby') }}
           onSpectate={(roomId) => { primeSound(); setSpectateRoomId(roomId); setPhase('online-spectate') }}
+          externalError={autoTargetError}
+          onDismissExternalError={() => setAutoTargetError(null)}
         />
       )}
 
@@ -472,10 +516,15 @@ function LudoSetup({
 
 type OnlineTab = 'quick' | 'private' | 'join' | 'watch'
 
-function LudoOnlineMenu({ isAr, onEnterLobby, onSpectate }: {
+function LudoOnlineMenu({ isAr, onEnterLobby, onSpectate, externalError, onDismissExternalError }: {
   isAr: boolean
   onEnterLobby: (roomId: string) => void
   onSpectate: (roomId: string) => void
+  /** Surfaces a failed Join Game/Spectate attempt that arrived from the
+   * Friends Gaming Action Sheet (room filled up, match already started,
+   * etc.) — same wording a manual join/watch failure would show. */
+  externalError?: string | null
+  onDismissExternalError?: () => void
 }) {
   const [tab, setTab] = useState<OnlineTab>('quick')
   const [busy, setBusy] = useState(false)
@@ -538,6 +587,12 @@ function LudoOnlineMenu({ isAr, onEnterLobby, onSpectate }: {
 
   return (
     <div style={{ padding: '8px 16px', maxWidth: 480, margin: '0 auto' }}>
+      {externalError && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,71,133,0.12)', border: '1px solid rgba(255,71,133,0.3)', borderRadius: 12, padding: '10px 14px', marginBottom: 14, fontSize: 12.5, color: '#ff9db8' }}>
+          <span style={{ flex: 1 }}>{externalError}</span>
+          <button onClick={onDismissExternalError} aria-label={isAr ? 'إغلاق' : 'Dismiss'} style={{ background: 'none', border: 'none', color: '#ff9db8', fontSize: 15, cursor: 'pointer', padding: 4, lineHeight: 1 }}>✕</button>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, marginBottom: 18, overflowX: 'auto' }}>
         {tabs.map((t) => (
           <button

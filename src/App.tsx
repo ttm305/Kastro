@@ -79,6 +79,15 @@ function AppShell() {
   const [gameLaunchContext, setGameLaunchContext] = useState<{ type: 'practice' | 'challenge' | 'tournament'; refId?: string } | null>(null)
   const [unreadChatCount, setUnreadChatCount] = useState(0)
   const [pendingChatOpen, setPendingChatOpen] = useState<{ conversationId: string; otherUser: { id: string; username: string; avatar_url?: string | null } } | null>(null)
+  // Friends Gaming Action Sheet's Join Game/Spectate actions — set right
+  // before navigating to 'ludo', consumed exactly once by LudoScreen (see
+  // its autoTarget prop) so a stale target can never re-trigger a join on
+  // some later, unrelated visit to the screen.
+  const [ludoAutoTarget, setLudoAutoTarget] = useState<{ mode: 'join' | 'spectate'; roomId: string } | null>(null)
+  const openLudoTarget = (mode: 'join' | 'spectate', roomId: string) => {
+    setLudoAutoTarget({ mode, roomId })
+    safeNavigate('ludo')
+  }
 
   // Plato-style Profile slide-over (see ProfileOverlayHost). `profileEverOpened`
   // lazily mounts <ProfileScreen> on first open and then NEVER unmounts it
@@ -349,6 +358,7 @@ function AppShell() {
           setLang={setLang}
           pendingOpenChat={pendingChatOpen}
           onPendingOpenChatConsumed={() => setPendingChatOpen(null)}
+          onOpenLudoTarget={openLudoTarget}
         />
       )}
       {screen === 'rewards'     && <RewardsScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
@@ -369,7 +379,14 @@ function AppShell() {
       {screen === 'tournament'  && <TournamentScreen onNavigate={safeNavigate} lang={lang} setLang={setLang} />}
       {screen === 'emojidecode' && <EmojiDecodeScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} />}
       {screen === 'colorblitz' && <ColorBlitzScreen onNavigate={safeNavigate} lang={lang} gameId={gameLaunchId} />}
-      {screen === 'ludo'       && <LudoScreen onNavigate={safeNavigate} lang={lang} />}
+      {screen === 'ludo'       && (
+        <LudoScreen
+          onNavigate={safeNavigate}
+          lang={lang}
+          autoTarget={ludoAutoTarget}
+          onAutoTargetConsumed={() => setLudoAutoTarget(null)}
+        />
+      )}
       {screen === 'ludopacing' && <LudoPacingSlice onNavigate={safeNavigate} lang={lang} />}
 
       {/* Hidden while the Profile slide-over is open — matches the native

@@ -2260,6 +2260,7 @@ export type Database = {
           reported_user_id: string
           conversation_id: string | null
           reason: string
+          category: string | null
           message_snapshot: Json
           status: string
           created_at: string
@@ -2270,6 +2271,7 @@ export type Database = {
           reported_user_id: string
           conversation_id?: string | null
           reason: string
+          category?: string | null
           message_snapshot?: Json
           status?: string
           created_at?: string
@@ -2280,9 +2282,34 @@ export type Database = {
           reported_user_id?: string
           conversation_id?: string | null
           reason?: string
+          category?: string | null
           message_snapshot?: Json
           status?: string
           created_at?: string
+        }
+        Relationships: []
+      }
+      friend_prefs: {
+        Row: {
+          user_id: string
+          friend_id: string
+          pinned: boolean
+          muted: boolean
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          friend_id: string
+          pinned?: boolean
+          muted?: boolean
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          friend_id?: string
+          pinned?: boolean
+          muted?: boolean
+          updated_at?: string
         }
         Relationships: []
       }
